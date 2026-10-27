@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "Cite this software version and the underlying methods listed in THIRD_PARTY_NOTICES.md."
+title: "modisp"
+authors:
+  - name: "Yuan Yusong"
+    type: entity
+version: "0.2.0"
+date-released: 2026-10-28
+license: BSD-3-Clause
+abstract: "Normalized FP64 multimodal P-SV and SH phase dispersion with CPU and optional CUDA backends."

@@ -1,0 +1,86 @@
+[
+  {
+    "repository": "pan3rock/QEDispInv",
+    "path": "src/disp.cc",
+    "ref": "ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa",
+    "sha": "bacd5a867a01474ebdec0f415e59cda7619d2445",
+    "url": "https://github.com/pan3rock/QEDispInv/blob/ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa/src/disp.cc"
+  },
+  {
+    "repository": "pan3rock/QEDispInv",
+    "path": "src/secfunc.cc",
+    "ref": "ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa",
+    "sha": "454d9a73eda37ca25673891abc3ac705bf32d31e",
+    "url": "https://github.com/pan3rock/QEDispInv/blob/ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa/src/secfunc.cc"
+  },
+  {
+    "repository": "pan3rock/QEDispInv",
+    "path": "src/toms748.cc",
+    "ref": "ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa",
+    "sha": "5c9521fa0296172322315b50441fb328d7dd6f37",
+    "url": "https://github.com/pan3rock/QEDispInv/blob/ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa/src/toms748.cc"
+  },
+  {
+    "repository": "pan3rock/QEDispInv",
+    "path": "include/disp.hpp",
+    "ref": "ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa",
+    "sha": "3abaa2389300c1a34f4ced68247ccb19f88b88b6",
+    "url": "https://github.com/pan3rock/QEDispInv/blob/ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa/include/disp.hpp"
+  },
+  {
+    "repository": "pan3rock/QEDispInv",
+    "path": "include/secfunc.hpp",
+    "ref": "ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa",
+    "sha": "028d5fabe4d7784a5e25063aae1ad2bad9a99771",
+    "url": "https://github.com/pan3rock/QEDispInv/blob/ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa/include/secfunc.hpp"
+  },
+  {
+    "repository": "pan3rock/QEDispInv",
+    "path": "include/toms748.h",
+    "ref": "ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa",
+    "sha": "a041ef50d41d5f40633ae9316c66710067936d8a",
+    "url": "https://github.com/pan3rock/QEDispInv/blob/ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa/include/toms748.h"
+  },
+  {
+    "repository": "pan3rock/QEDispInv",
+    "path": "include/areclose.hpp",
+    "ref": "ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa",
+    "sha": "56715f402fa8b8f5b9a8071872fba282734e5696",
+    "url": "https://github.com/pan3rock/QEDispInv/blob/ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa/include/areclose.hpp"
+  },
+  {
+    "repository": "pan3rock/QEDispInv",
+    "path": "LICENSE",
+    "ref": "ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa",
+    "sha": "153d416dc8d2d60076698ec3cbfce34d91436a03",
+    "url": "https://github.com/pan3rock/QEDispInv/blob/ed1b5dd7b449a2b3a27bb8e6581278790f5df8aa/LICENSE"
+  },
+  {
+    "repository": "fmtlib/fmt",
+    "path": "include/fmt/base.h",
+    "ref": "11.2.0",
+    "sha": "87b3fd7cb489c88436d136f7cd5db9c9a8e6cec8",
+    "url": "https://github.com/fmtlib/fmt/blob/11.2.0/include/fmt/base.h"
+  },
+  {
+    "repository": "fmtlib/fmt",
+    "path": "include/fmt/format.h",
+    "ref": "11.2.0",
+    "sha": "50e571442e53933a24177187a6e92968c8f6e2d9",
+    "url": "https://github.com/fmtlib/fmt/blob/11.2.0/include/fmt/format.h"
+  },
+  {
+    "repository": "fmtlib/fmt",
+    "path": "include/fmt/format-inl.h",
+    "ref": "11.2.0",
+    "sha": "a1e01661178a46e8cf0767e8b9d94a9ee5a9db36",
+    "url": "https://github.com/fmtlib/fmt/blob/11.2.0/include/fmt/format-inl.h"
+  },
+  {
+    "repository": "fmtlib/fmt",
+    "path": "LICENSE",
+    "ref": "11.2.0",
+    "sha": "1cd1ef92696b65b2ecb0e560e622f0a0e869dcf3",
+    "url": "https://github.com/fmtlib/fmt/blob/11.2.0/LICENSE"
+  }
+]

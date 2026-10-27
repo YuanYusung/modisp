@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.22)
+project(modisp_cuda12 LANGUAGES CXX CUDA)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 17)
+find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
+execute_process(COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
+  OUTPUT_VARIABLE pybind11_DIR OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+find_package(pybind11 CONFIG REQUIRED)
+find_package(CUDAToolkit 12 REQUIRED)
+if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13)
+  message(FATAL_ERROR "This distribution requires a CUDA 12 toolkit")
+endif()
+# The release preparation script copies the exact shared source here. In the
+# development checkout it is taken directly from the common project tree.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cpp/common/physics.hpp")
+  set(MD_CPP "${CMAKE_CURRENT_SOURCE_DIR}/cpp")
+else()
+  set(MD_CPP "${CMAKE_CURRENT_SOURCE_DIR}/../cpp")
+endif()
+pybind11_add_module(_cuda ${MD_CPP}/cuda/bindings.cpp ${MD_CPP}/cuda/qe.cu
+  ${MD_CPP}/cuda/coarse_scan.cu ${MD_CPP}/cuda/refine.cu)
+target_include_directories(_cuda PRIVATE ${MD_CPP})
+target_link_libraries(_cuda PRIVATE CUDA::cudart_static)
+foreach(feature DENSITY_TABLE VALUE_CACHE MERGE ACTIVITY_QUEUE PREFIX_DENSE)
+  option(MD_${feature} "Enable ${feature}" ON)
+  target_compile_definitions(_cuda PRIVATE MD_${feature}=$<BOOL:${MD_${feature}}>)
+endforeach()
+option(MD_FMA "Use IEEE FP64 fused multiply-add on CUDA" ON)
+target_compile_options(_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3;--fmad=$<IF:$<BOOL:${MD_FMA}>,true,false>>
+  $<$<COMPILE_LANGUAGE:CXX>:-O3;-ffp-contract=off>)
+set_target_properties(_cuda PROPERTIES CUDA_RUNTIME_LIBRARY Static)
+install(TARGETS _cuda LIBRARY DESTINATION modisp_cuda)

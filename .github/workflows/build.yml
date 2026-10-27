@@ -1,0 +1,42 @@
+name: CPU build and install tests
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  cpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install build pytest scipy disba==0.7.0
+      - run: python -m build
+      - run: python -m pip install --no-deps --force-reinstall dist/*.whl
+      - name: Tests outside the source checkout
+        shell: bash
+        run: |
+          cp -R tests "$RUNNER_TEMP/modisp-tests"
+          cd "$RUNNER_TEMP"
+          python -m pytest modisp-tests -q -rs
+          modisp doctor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpu-${{ matrix.os }}-${{ matrix.python }}
+          path: dist/*
+  cuda12:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, x64, cuda12]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: python -m pip install build pytest scipy disba==0.7.0
+      - run: python tools/prepare_release.py
+      - run: python -m build && python -m build cuda-plugin
+      - run: python -m pip install dist/*.whl cuda-plugin/dist/*.whl
+      - run: MODISP_TEST_BACKEND=cuda python -m pytest -q -rs

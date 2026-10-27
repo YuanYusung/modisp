@@ -122,6 +122,21 @@ def take_models(suite, indices):
     }
 
 
+def unique_model_count(suite):
+    """Count distinct layer-parameter vectors, independently of period outputs."""
+    data = suite["data"]
+    seen = set()
+    for index in range(data["reference"].shape[0]):
+        digest = hashlib.sha256()
+        for key in FIELDS:
+            values = np.ascontiguousarray(data[key][index], dtype=np.float64)
+            digest.update(key.encode("ascii"))
+            digest.update(np.asarray(values.shape, dtype=np.int64).tobytes())
+            digest.update(values.tobytes())
+        seen.add(digest.digest())
+    return len(seen)
+
+
 def make_manifest(suites, subset=False, performance_batches=None):
     entries = []
     for suite in suites:
@@ -130,24 +145,44 @@ def make_manifest(suites, subset=False, performance_batches=None):
                 continue
             available = suite["data"]["reference"].shape[0]
             needed = max(performance_batches)
-            if needed > available:
-                raise SystemExit(f"seed20260916 has {available} models, need {needed}")
-            indices = list(range(needed))
+            unique = unique_model_count(suite)
+            if unique != available:
+                raise SystemExit(
+                    f"seed20260916 contains {unique} unique model vectors, "
+                    f"expected {available}"
+                )
+            indices = list(range(min(needed, available)))
+            task_count = needed
         else:
             indices = selected_indices(suite, subset)
+            task_count = len(indices)
         entries.append({
             "suite": suite["name"],
             "indices": indices,
             "input_sha256": sha256(suite["path"]),
-            "models": len(indices),
-            "trajectories": len(indices) * int(suite["data"]["periods"].size),
+            "models": task_count,
+            "unique_models": len(indices),
+            "sampling": (
+                "prefix" if task_count <= len(indices)
+                else f"cyclic modulo {len(indices)} source models"
+            ),
+            "unique_trajectories": len(indices) * int(suite["data"]["periods"].size),
+            "trajectories": task_count * int(suite["data"]["periods"].size),
         })
     manifest = {
         "subset": bool(subset),
         "suites": entries,
         "models": sum(item["models"] for item in entries),
+        "unique_models": sum(item["unique_models"] for item in entries),
         "trajectories": sum(item["trajectories"] for item in entries),
     }
+    if performance_batches is not None:
+        source_models = entries[0]["unique_models"] if entries else 0
+        manifest["performance_batches"] = list(performance_batches)
+        manifest["performance_model_mapping"] = (
+            f"For B <= {source_models}, use the first B distinct models; for "
+            f"B > {source_models}, task i uses source model i % {source_models}."
+        )
     if subset and performance_batches is None:
         if (manifest["models"], manifest["trajectories"]) != (43, 1347):
             raise SystemExit(
@@ -508,25 +543,39 @@ def performance(args, suites, environment):
     if suite is None:
         raise SystemExit("performance requires seed20260916.npz")
     data = suite["data"]
-    needed = max(args.batches)
+    available = data["reference"].shape[0]
+    unique = unique_model_count(suite)
+    if unique != available:
+        raise SystemExit(
+            f"seed20260916 contains {unique} unique model vectors, expected {available}"
+        )
     models = np.stack(
-        [np.column_stack([data[key][i] for key in FIELDS]) for i in range(needed)]
+        [np.column_stack([data[key][i] for key in FIELDS]) for i in range(available)]
     )
     periods = data["periods"]
-    reference = data["reference"][:needed]
-    stable = stable_mask(suite)[:needed]
+    reference = data["reference"]
+    stable = stable_mask(suite)
     if models.shape[1:] != (10, 4) or periods.size != 64 or reference.shape[1] != 4:
         raise SystemExit(
             f"performance requires L=10,T=64,nmodes=4; got {models.shape}, T={periods.size}"
         )
     cmin = 0.2
-    cmaxes = data["vs"][:needed, -1]
+    cmaxes = data["vs"][:, -1]
     rows = []
-    for solver_name in SOLVERS:
+    for solver_name in args.solvers:
         for batch_size in args.batches:
-            batch = np.ascontiguousarray(models[:batch_size])
-            ref = reference[:batch_size]
-            stable_batch = stable[:batch_size]
+            model_indices = np.arange(batch_size)
+            if batch_size > available:
+                model_indices %= available
+            batch = np.ascontiguousarray(models[model_indices])
+            cmaxes_batch = cmaxes[model_indices]
+            ref = reference[model_indices]
+            stable_batch = stable[model_indices]
+            unique_models = int(np.unique(model_indices).size)
+            sampling = (
+                "prefix" if batch_size <= available
+                else f"cyclic modulo {available} source models"
+            )
             executor = None
             solvers = None
             pool_create_seconds = None
@@ -536,11 +585,11 @@ def performance(args, suites, environment):
                 backend = "cuda" if solver_name == "modisp-cuda" else "cpu"
                 threads = 1 if solver_name == "modisp-cpu1" else 8
                 solvers, call = make_modisp_runner(
-                    batch, periods, cmin, cmaxes[:batch_size], backend, threads
+                    batch, periods, cmin, cmaxes_batch, backend, threads
                 )
                 kind = "modisp"
             elif solver_name == "disba-serial":
-                call = lambda: run_disba_batch(batch, periods, cmin, cmaxes[:batch_size])
+                call = lambda: run_disba_batch(batch, periods, cmin, cmaxes_batch)
                 kind = "external"
             elif solver_name == "disba-process8":
                 if sys.platform != "linux":
@@ -555,7 +604,7 @@ def performance(args, suites, environment):
                 warm_start = time.perf_counter()
                 futures = [
                     executor.submit(
-                        disba_warm_worker, batch[0], periods, cmin, float(cmaxes[0])
+                        disba_warm_worker, batch[0], periods, cmin, float(cmaxes_batch[0])
                     ) for _ in range(64)
                 ]
                 worker_pids = {future.result() for future in futures}
@@ -563,12 +612,12 @@ def performance(args, suites, environment):
                 if len(worker_pids) != 8:
                     raise RuntimeError(f"only {len(worker_pids)} pool workers were warmed")
                 call = lambda: run_disba_batch(
-                    batch, periods, cmin, cmaxes[:batch_size], executor=executor
+                    batch, periods, cmin, cmaxes_batch, executor=executor
                 )
                 kind = "external"
             else:
                 library, function = load_qed(args.qed_library, benchmark=True)
-                call = make_qed_runner(batch, periods, cmin, cmaxes[:batch_size], function)
+                call = make_qed_runner(batch, periods, cmin, cmaxes_batch, function)
                 kind = "external"
             initialization_seconds = time.perf_counter() - init_start
             try:
@@ -592,11 +641,14 @@ def performance(args, suites, environment):
                 row = {
                     "solver": solver_name,
                     "B": batch_size,
+                    "unique_models": unique_models,
+                    "sampling": sampling,
+                    "trajectories": batch_size * int(periods.size),
                     "initialization_seconds": initialization_seconds,
                     "pool_create_seconds": pool_create_seconds,
                     "worker_warmup_seconds": worker_warmup_seconds,
                     **timing,
-                    "models_per_second": batch_size / timing["median_seconds"],
+                    "tasks_per_second": batch_size / timing["median_seconds"],
                     "checks": checks,
                 }
                 rows.append(row)
@@ -608,6 +660,13 @@ def performance(args, suites, environment):
     summary = {
         "environment": environment,
         "suite": "seed20260916",
+        "unique_source_models": unique,
+        "performance_batches": args.batches,
+        "performance_solvers": args.solvers,
+        "batch_mapping": (
+            f"B <= {available}: first B distinct models; B > {available}: "
+            f"task i uses source model i % {available}"
+        ),
         "reference": "NPZ independent reference",
         "cmin": cmin,
         "nmodes": NMODES,
@@ -620,9 +679,10 @@ def performance(args, suites, environment):
 
 def write_performance_csv(path, rows):
     fields = [
-        "solver", "B", "initialization_seconds", "pool_create_seconds",
+        "solver", "B", "unique_models", "sampling", "trajectories",
+        "initialization_seconds", "pool_create_seconds",
         "worker_warmup_seconds", "first_call_seconds", "warmup_seconds",
-        "median_seconds", "min_seconds", "max_seconds", "models_per_second",
+        "median_seconds", "min_seconds", "max_seconds", "tasks_per_second",
         "first_wrong", "first_missing", "first_extra", "first_unresolved",
         "last_wrong", "last_missing", "last_extra", "last_unresolved",
     ]
@@ -640,10 +700,14 @@ def write_performance_csv(path, rows):
 def write_performance_readme(path, rows):
     lines = [
         "# External performance results", "",
-        "Times are seconds; models/s uses the median steady-state batch time. "
+        "Times are seconds; tasks/s uses the median steady-state batch time. "
         "The NPZ reference is the correctness judge for first and last outputs.", "",
-        "| Solver | B | Init | Pool create | Worker warmup | First call | Warmup | Median | Min | Max | Models/s | First issues | Last issues |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+        "For batches larger than the 64-model source suite, task index `i` maps "
+        "to source model `i % 64`; `Independent models` reports the number of distinct "
+        "parameter vectors actually represented. Issue counts are per task, so "
+        "repeated source models are counted on each occurrence.", "",
+        "| Solver | Task count | Independent models | Input mapping | Period traces | Init | Pool create | Worker warmup | First call | Warmup | Median | Min | Max | Tasks/s | First issues | Last issues |",
+        "|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for row in rows:
         issue_text = {}
@@ -655,11 +719,13 @@ def write_performance_readme(path, rows):
         def number(value):
             return "n/a" if value is None else f"{value:.6g}"
         lines.append(
-            f"| {row['solver']} | {row['B']} | {number(row['initialization_seconds'])} | "
+            f"| {row['solver']} | {row['B']} | {row['unique_models']} | "
+            f"{row['sampling']} | {row['trajectories']} | "
+            f"{number(row['initialization_seconds'])} | "
             f"{number(row['pool_create_seconds'])} | {number(row['worker_warmup_seconds'])} | "
             f"{number(row['first_call_seconds'])} | {number(row['warmup_seconds'])} | "
             f"{number(row['median_seconds'])} | {number(row['min_seconds'])} | "
-            f"{number(row['max_seconds'])} | {number(row['models_per_second'])} | "
+            f"{number(row['max_seconds'])} | {number(row['tasks_per_second'])} | "
             f"{issue_text['first']} | {issue_text['last']} |"
         )
     path.write_text("\n".join(lines) + "\n")
@@ -699,6 +765,9 @@ def collect_environment(qed_library):
         "machine": platform.machine(),
         "cpu": readable_cpu(),
         "affinity": affinity,
+        "load_average_at_start": (
+            list(os.getloadavg()) if hasattr(os, "getloadavg") else None
+        ),
         "python": sys.version,
         "versions": {
             name: package_version(name)
@@ -733,18 +802,29 @@ def parse_args():
     common.add_argument("--out", type=Path, required=True,
                         help="new or empty raw-output directory")
     common.add_argument("--repeats", type=int, default=5)
-    common.add_argument("--batches", type=int, nargs="+", default=[1, 8, 64])
+    common.add_argument(
+        "--batches", type=int, nargs="+", default=[1, 8, 64, 1000],
+        help="performance task counts; values above the 64-model suite cycle through its fixed models",
+    )
     common.add_argument("--subset", action="store_true",
                         help="accuracy: canonical/all QED, 4 per random_L, 8 seed models")
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("accuracy", parents=[common], help="compare complete outputs")
-    subparsers.add_parser("performance", parents=[common], help="measure fixed seed batches")
+    performance_parser = subparsers.add_parser(
+        "performance", parents=[common], help="measure fixed seed batches"
+    )
+    performance_parser.add_argument(
+        "--solvers", nargs="+", choices=SOLVERS, default=list(SOLVERS),
+        help="solver configurations to measure (default: all)",
+    )
     args = parser.parse_args()
     if args.repeats < 1 or any(batch < 1 for batch in args.batches):
         parser.error("--repeats and every --batches value must be positive")
     if len(set(args.batches)) != len(args.batches):
         parser.error("--batches values must be unique")
+    if args.command == "performance" and len(set(args.solvers)) != len(args.solvers):
+        parser.error("--solvers values must be unique")
     args.qed_library = args.qed_library.resolve()
     if not args.qed_library.is_file():
         parser.error(f"QED library does not exist: {args.qed_library}")

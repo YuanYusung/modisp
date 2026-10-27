@@ -1,8 +1,10 @@
 # modisp 0.2.0
 
-modisp computes FP64 multimodal Rayleigh/P–SV and Love phase dispersion for
-layered elastic media. A CPU base package and an optional Linux CUDA 12 plugin
-share one Python interface. Units are km, km/s, g/cm³ and seconds.
+modisp is an FP64, GPU-accelerated package for batched multimode Rayleigh/P–SV
+and Love phase-velocity calculations in 1-D layered elastic media. A portable
+CPU backend and an optional Linux CUDA 12 plugin share one Python interface.
+The package is designed for large-scale forward modeling in model-space
+exploration and synthetic-data workflows. Units are km, km/s, g/cm³ and seconds.
 
 ## Install
 
@@ -55,6 +57,51 @@ Models with different layer counts can use zero-thickness solid padding.
 Reusable solvers retain workspaces and release the Python GIL during native
 computation. `backend="auto"` selects a compatible CUDA device when available,
 otherwise CPU and records the reason. Numerical failure never changes backend.
+
+### Large model batches
+
+The solver accepts parameter arrays shaped `[B,L]` and returns velocity arrays
+shaped `[B,nmodes,T]`. For long runs, process and save outer batches so the
+Python input and result arrays do not need to hold the entire model set at once.
+The native workspace is budgeted and the solver can chunk internally as well.
+
+```python
+import numpy as np
+from modisp import Solver
+
+h = np.load("thickness.npy", mmap_mode="r")
+vp = np.load("vp.npy", mmap_mode="r")
+vs = np.load("vs.npy", mmap_mode="r")
+rho = np.load("rho.npy", mmap_mode="r")
+n_models = h.shape[0]
+periods = np.logspace(-1, 1, 64)
+chunk_size = 512
+velocity = np.lib.format.open_memmap(
+    "phase_velocity.npy", mode="w+", dtype=np.float64,
+    shape=(n_models, 4, periods.size),
+)
+trace_flags = np.lib.format.open_memmap(
+    "trace_flags.npy", mode="w+", dtype=np.uint32,
+    shape=(n_models, periods.size),
+)
+
+with Solver(backend="auto", threads=8, cmin=0.2) as solver:
+    for start in range(0, n_models, chunk_size):
+        stop = min(start + chunk_size, n_models)
+        result = solver(
+            h[start:stop], vp[start:stop], vs[start:stop], rho[start:stop],
+            periods, nmodes=4, wave="rayleigh",
+        )
+        velocity[start:stop] = result.phase_velocity
+        trace_flags[start:stop] = result.trace_flags
+
+velocity.flush()
+trace_flags.flush()
+```
+
+Inspect `status`, `trace_flags`, `search_level` and `root_count` alongside the
+velocities. A requested mode can be absent without being a numerical failure;
+see [API and diagnostics](docs/API.md) for their meanings.
 
 ### Migrating from 0.1.0
 
@@ -114,9 +161,14 @@ Maximum common absolute error covers only points finite in both outputs and does
 not replace wrong/missing/extra counts. disba used its default Dunkin/`dc=0.005`
 settings.
 
-Performance uses the first 64 `seed20260916` models (`L=10, T=64, nmodes=4`,
-`cmin=0.2`). Values are median seconds from five complete steady-state calls
-after warmup; lower is better.
+The fixed-shape comparison uses the first 64 `seed20260916` models (`L=10`,
+`T=64`, `nmodes=4`, `cmin=0.2`). A separate CUDA run contains **1,000 solve
+tasks and 64 independent baseline models**: task `i` cycles to source model
+`i % 64`. This produces 64,000 model-period tasks but only 4,096 distinct
+model-period reference traces. The B=1/8/64 table below compares all solver
+configurations; the B=1,000 measurement is CUDA only. All timings are medians of
+five steady-state calls after warmup; the B=1,000 output's first and last calls
+were also checked against the independent reference.
 
 | Solver / configuration | B=1 (s) | B=8 (s) | B=64 (s) | B=64 models/s |
 |---|---:|---:|---:|---:|
@@ -126,6 +178,18 @@ after warmup; lower is better.
 | disba, serial | 0.011027 | 0.097004 | 0.809310 | 79.080 |
 | disba, 8 processes | 0.012252 | 0.024412 | 0.144897 | 441.694 |
 | QEDispInv, serial | 0.013284 | 0.117171 | 0.864273 | 74.051 |
+
+The B=1,000 CUDA-only run completed in a median 1.298926 s, or 769.867 solve
+tasks/s. The task count is 1,000 and the unique model count is 64.
+
+| Solver | Task count | Independent models | Unique reference traces | First call (s) | Warm median (s) | Tasks/s | First/last issues |
+|---|---:|---:|---:|---:|---:|---:|---|
+| modisp CUDA, A800 | 1,000 | 64 | 4,096 | 1.450736 | 1.298926 | 769.867 | 0 / 0 |
+
+Both the first and last output had zero wrong, missing, extra or unresolved
+results; their maximum common absolute error was `2.140507e-07 km/s`. Third-party
+solvers were not rerun at B=1,000, so the same-size external comparison remains
+the B=64 table above.
 
 The disba parallel configuration uses a persistent eight-worker process pool;
 QEDispInv is serial. First-call/JIT costs and raw samples are reported in

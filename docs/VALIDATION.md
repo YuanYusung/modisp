@@ -53,11 +53,12 @@ public source or runtime distributions.
 
 ## External solid-Rayleigh performance
 
-The performance run used the first 64 `seed20260916` models, `L=10`, `T=64`,
-four modes and `cmin=0.2`. Each configuration recorded initialization and a
-first complete call, then a separate warmup and five steady-state calls. The
-table reports first-call and median steady seconds; models/s uses the median.
-Every first and last output was checked against the independent reference.
+The fixed-shape performance comparison used the first 64 `seed20260916` models,
+`L=10`, `T=64`, four modes and `cmin=0.2`. Each configuration recorded
+initialization and a first complete call, then a separate warmup and five
+steady-state calls. The table reports first-call and median steady seconds;
+models/s uses the median. Every first and last output was checked against the
+independent reference.
 
 | Solver / configuration | B | First call (s) | Steady median (s) | Models/s |
 |---|---:|---:|---:|---:|
@@ -79,6 +80,28 @@ Every first and last output was checked against the independent reference.
 | QEDispInv, serial | 1 | 0.026260 | 0.013284 | 75.279 |
 | QEDispInv, serial | 8 | 0.116775 | 0.117171 | 68.276 |
 | QEDispInv, serial | 64 | 0.870068 | 0.864273 | 74.051 |
+
+### GPU-only 1,000-task run
+
+At the user's direction, the larger-batch measurement was run on the CUDA
+backend only. It submits **1,000 solve tasks using 64 independent baseline
+models**: task `i` maps to model `i % 64`. Each task has 64 periods, so the
+batch has 64,000 model-period tasks and 4,096 distinct reference traces. This
+is a repeated-model throughput measurement, not a run with 1,000 independent
+models. The command was `tools/benchmark_external.py performance --batches
+1000 --solvers modisp-cuda --repeats 5`.
+
+| Solver | Task count | Independent models | Unique reference traces | First call (s) | Warm median (s) | Tasks/s | First/last issues |
+|---|---:|---:|---:|---:|---:|---:|---|
+| modisp CUDA, A800 | 1,000 | 64 | 4,096 | 1.450736 | 1.298926 | 769.867 | 0 / 0 |
+
+The first and last calls each had zero wrong, missing, extra or unresolved
+results; maximum common absolute error was `2.140507e-07 km/s`. CPU and
+third-party solvers were not measured at B=1,000 in this pass. Their full
+same-host comparison remains the B=1/8/64 results above; no same-size external
+speedup is implied by this CUDA-only row. Raw timing samples and outputs are
+retained alongside the external release archive under
+`performance-B1000-cuda/`.
 
 The host has dual-socket Xeon Gold 6430 CPUs and NVIDIA A800/sm_80 GPUs. The
 measurement used Python 3.10.12, NumPy 2.2.6, Numba 0.68.0 and disba 0.7.0.

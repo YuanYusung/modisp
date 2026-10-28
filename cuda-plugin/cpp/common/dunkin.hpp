@@ -186,18 +186,20 @@ MD_HD void dunkin_dnka(T wvno2, T gam, T gammk, T rho, const VarOut<T> &v,
 // ---------------------------------------------------------------------------
 template <typename T, bool NORMALIZE>
 MD_HD T dunkin_secular(const T *d, const T *a, const T *b, const T *rho,
-                       int nlayer, T wvno, T omega, int water = 0, bool clamp_omega = true) {
+                       int nlayer, T wvno, T omega, int water = 0, bool clamp_omega = true,
+                       const T *prepared_ka = nullptr, const T *prepared_kb = nullptr,
+                       const T *prepared_gammk = nullptr) {
   if (clamp_omega && omega < T(1.0e-4)) omega = T(1.0e-4);
   const T wvno2 = wvno * wvno;
   const int last = nlayer - 1;
 
   // --- E vector for the bottom half-space ---
-  const T xka0 = omega / a[last];
-  const T xkb0 = omega / b[last];
+  const T xka0 = prepared_ka ? prepared_ka[last] : omega / a[last];
+  const T xkb0 = prepared_kb ? prepared_kb[last] : omega / b[last];
   T ra = MD_SQRT((wvno + xka0) * MD_FABS(wvno - xka0));
   T rb = MD_SQRT((wvno + xkb0) * MD_FABS(wvno - xkb0));
   T t = b[last] / omega;
-  T gammk = T(2) * t * t;
+  T gammk = prepared_gammk ? prepared_gammk[last] : T(2) * t * t;
   T gam = gammk * wvno2;
   const T gamm1 = gam - T(1);
   const T rho_hs = rho[last];
@@ -212,10 +214,10 @@ MD_HD T dunkin_secular(const T *d, const T *a, const T *b, const T *rho,
   // --- propagate upward, bottom layer first ---
   for (int m = nlayer - 2; m >= water; --m) {
     // Recompute layer coefficients for the current angular frequency.
-    const T xka = omega / a[m];
-    const T xkb = omega / b[m];
+    const T xka = prepared_ka ? prepared_ka[m] : omega / a[m];
+    const T xkb = prepared_kb ? prepared_kb[m] : omega / b[m];
     t = b[m] / omega;
-    gammk = T(2) * t * t;
+    gammk = prepared_gammk ? prepared_gammk[m] : T(2) * t * t;
     gam = gammk * wvno2;
     ra = MD_SQRT((wvno + xka) * MD_FABS(wvno - xka));
     rb = MD_SQRT((wvno + xkb) * MD_FABS(wvno - xkb));

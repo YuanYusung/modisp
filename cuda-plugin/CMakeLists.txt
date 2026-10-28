@@ -21,7 +21,7 @@ pybind11_add_module(_cuda ${MD_CPP}/cuda/bindings.cpp ${MD_CPP}/cuda/qe.cu
   ${MD_CPP}/cuda/coarse_scan.cu ${MD_CPP}/cuda/refine.cu)
 target_include_directories(_cuda PRIVATE ${MD_CPP})
 target_link_libraries(_cuda PRIVATE CUDA::cudart_static)
-foreach(feature DENSITY_TABLE VALUE_CACHE MERGE ACTIVITY_QUEUE PREFIX_DENSE)
+foreach(feature DENSITY_TABLE VALUE_CACHE MERGE ACTIVITY_QUEUE PREFIX_DENSE WARP_STATS TRACE_CONSTANTS)
   option(MD_${feature} "Enable ${feature}" ON)
   target_compile_definitions(_cuda PRIVATE MD_${feature}=$<BOOL:${MD_${feature}}>)
 endforeach()

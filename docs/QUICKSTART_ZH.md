@@ -6,7 +6,7 @@ P–SV/Scholte 型根及 Love 多模态相速度。
 ## 安装
 
 ```sh
-python -m pip install /path/to/modisp-0.2.0-<匹配标签>.whl
+python -m pip install /path/to/modisp-0.2.1-<匹配标签>.whl
 modisp doctor
 ```
 
@@ -14,7 +14,7 @@ CPU 使用不需要 CUDA。有 NVIDIA GPU 时，再安装版本完全一致的
 `modisp_cuda12` wheel。离线安装：
 
 ```sh
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.2.0
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.2.1
 ```
 
 从源码安装使用 `python -m pip install <CPU源码包.tar.gz>`，需要 C++17

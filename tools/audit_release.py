@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Inventory public source and distributions; exclude research/runtime caches."""
-import argparse,difflib,hashlib,json,tarfile,zipfile
+import argparse,difflib,hashlib,json,re,tarfile,zipfile
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('--baseline',type=Path);a=p.parse_args();root=Path(__file__).resolve().parents[1];out=root/'release';out.mkdir(exist_ok=True)
+p=argparse.ArgumentParser();p.add_argument('--baseline',type=Path);p.add_argument('--out',type=Path);p.add_argument('--dist',type=Path,action='append');a=p.parse_args();root=Path(__file__).resolve().parents[1];out=a.out or root/'release';out.mkdir(parents=True,exist_ok=True)
 allowed_dirs=['cpp','python','tests','docs','examples','tools','scripts','.github','cuda-plugin']
 allowed_files=['README.md','pyproject.toml','CMakeLists.txt','LICENSE','THIRD_PARTY_NOTICES.md','CITATION.cff','CHANGELOG.md','.gitignore']
 skip={'__pycache__','.numba-cache','.pytest_cache','build','dist'}
@@ -23,6 +23,9 @@ for f in files:
     if rel=='python/modisp/_legacy.py' and baseline_pkg is not None:old=baseline_pkg/'__init__.py'
     if rel=='tools/qed_reference_adapter.cpp' and a.baseline:old=a.baseline/'scripts/reference_driver.cpp'
     if old is None and a.baseline and (a.baseline/rel).exists():old=a.baseline/rel
+    # Modern snapshots keep the same public layout. Prefer their exact path
+    # over legacy src/package migration mappings when that path is present.
+    if a.baseline and (a.baseline/rel).is_file():old=a.baseline/rel
     original=b''
     if old is not None and old.exists():
         original=old.read_bytes();origin='retained/adapted from supplied baseline'
@@ -42,7 +45,7 @@ for f in files:
     b=f.read_bytes();blob=hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest()
     if blob in author:raise SystemExit(f'External QEDispInv source leaked into public tree: {f}')
 inventories=[]
-for folder in [root/'dist',root/'cuda-plugin/dist']:
+for folder in a.dist or [root/'dist',root/'cuda-plugin/dist']:
     for archive in sorted(folder.glob('*')):
         if archive.suffix=='.whl':
             with zipfile.ZipFile(archive) as z:names=z.namelist()
@@ -51,9 +54,11 @@ for folder in [root/'dist',root/'cuda-plugin/dist']:
         else:continue
         bad=[n for n in names if any(x in n for x in ['/research/','/.venv','__pycache__','.numba-cache','libqed_reference','QEDispInv/src/','/build/'])]
         if bad:raise SystemExit(f'Unwanted distribution files in {archive}: {bad[:8]}')
-        inventories.append(dict(archive=archive.relative_to(root).as_posix(),sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),files=names))
+        label=archive.relative_to(root).as_posix() if archive.is_relative_to(root) else str(archive.resolve())
+        inventories.append(dict(archive=label,sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),files=names))
 (out/'DISTRIBUTION_INVENTORY.json').write_text(json.dumps(inventories,indent=2)+'\n')
-archive=out/'modisp_v0.2.0_public_source.tar.gz'
+version=re.search(r'^version = "([^"]+)"', (root/'pyproject.toml').read_text(),re.M).group(1)
+archive=out/f'modisp_v{version}_public_source.tar.gz'
 with tarfile.open(archive,'w:gz') as t:
-    for f in files:t.add(f,arcname='modisp_v0.2.0/'+f.relative_to(root).as_posix(),recursive=False)
+    for f in files:t.add(f,arcname=f'modisp_v{version}/'+f.relative_to(root).as_posix(),recursive=False)
 print(json.dumps(dict(public_files=len(records),distributions=len(inventories),qed_implementation_files=0,source_archive=str(archive))))

@@ -1,5 +1,19 @@
 # Changes
 
+## 0.2.1 — 2026-10-28
+
+- Precompute exact model/period constants in the FP64 CPU and CUDA recurrences;
+  retain every search density, guarded verification and dense fallback.
+- Reuse CPU model/sort buffers and native capacity across short tail batches.
+- Isolate CUDA work in a solver-owned stream with persistent pinned staging;
+  aggregate sampling counters per warp and opt into shared memory for 256 layers.
+- Add optional `Solver(profile=True)` stage timings and cache/activity counters.
+- Add streaming FP64 ModePhys preparation, full-diagnostic output, checked resume
+  and interleaved installation benchmarks that reject observed GPU contention.
+- Bump the private extension ABI to 2; install matching 0.2.1 CPU/CUDA wheels.
+- Record matched ModePhys throughput gains of 4.56% CPU and 5.34% CUDA; retain
+  byte-identical full Base outputs and document four legacy unresolved fixtures.
+
 ## 0.2.0 — 2026-10-28
 
 - Remove `PhaseDispersion`, `DispersionCurve` and `DispersionError`. Use

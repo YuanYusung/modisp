@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "modisp"
-version = "0.2.0"
+version = "0.2.1"
 description = "FP64 multimodal Rayleigh and Love dispersion with CPU and optional CUDA backends"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,7 +14,7 @@ dependencies = ["numpy>=1.24"]
 authors = [{name = "Yuan Yusong"}]
 
 [project.optional-dependencies]
-cuda12 = ["modisp-cuda12==0.2.0; platform_system=='Linux' and platform_machine=='x86_64'"]
+cuda12 = ["modisp-cuda12==0.2.1; platform_system=='Linux' and platform_machine=='x86_64'"]
 test = ["pytest>=7", "scipy>=1.10", "disba==0.7.0"]
 docs = ["sphinx>=7", "myst-parser>=2"]
 

@@ -162,6 +162,11 @@ def test_independent_witness_regressions(path):
     assert bool(f['reference_stable'])
     with md.Solver(backend=BACKEND,cmin=.2) as s:
         out=s(**{k:f[k] for k in FIELDS},periods=f['periods'],nmodes=3)
+    # 0.2.0 resolved these seven witnesses on both CPU and CUDA. Preserve that
+    # acceptance boundary: returning all UNRESOLVED must not pass a regression.
+    # model9384 remains an explicitly retained numerical limitation.
+    if path.stem!='witness_model9384_period11':
+        assert not np.any(out.trace_flags&md.TRACE_SEARCH_UNCONVERGED)
     if np.any(out.trace_flags&md.TRACE_SEARCH_UNCONVERGED):
         assert np.isnan(out.phase_velocity).all()
         assert np.all(out.status==md.SolveStatus.UNRESOLVED)

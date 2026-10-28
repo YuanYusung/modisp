@@ -1,4 +1,4 @@
-# modisp 0.2.0
+# modisp 0.2.1
 
 modisp is an FP64, GPU-accelerated package for batched multimode Rayleigh/P–SV
 and Love phase-velocity calculations in 1-D layered elastic media. A portable
@@ -11,13 +11,19 @@ exploration and synthetic-data workflows. Units are km, km/s, g/cm³ and seconds
 Install the wheel matching your Python and platform, or build the CPU source:
 
 ```sh
-python -m pip install /path/to/modisp-0.2.0-<matching-tags>.whl
+python -m pip install /path/to/modisp-0.2.1-<matching-tags>.whl
 modisp doctor
 ```
 
 CPU installation and import require no CUDA. CUDA support is provided by the
 separate `modisp-cuda12` wheel with exactly the same version. NumPy is the only
 Python runtime dependency. See [installation and deployment](docs/INSTALL.md).
+
+See [performance measurement and the ModePhys workflow](docs/PERFORMANCE.md) for
+0.2.1 profiling, persistent workspace reuse and reproducible real-task tests.
+On matched 1,024-model inputs, same-host steady throughput improved 4.56% on
+64 CPU threads and 5.34% on an A800; the complete 29,379-model Base run improved
+4.85% end to end, with byte-identical numerical outputs and diagnostics.
 
 ## Unified dispersion interface
 
@@ -142,7 +148,7 @@ search. A zero flag or agreement between sampling levels describes the completed
 checks, not a mathematical guarantee that every physical root was found. See
 [API and diagnostics](docs/API.md).
 
-## Same-host comparison
+## Same-host comparison (0.2.0 baseline)
 
 Measured on 2026-10-28 with disba 0.7.0 and QEDispInv `ed1b5dd`, using the same
 solid-Rayleigh inputs on dual-socket Xeon Gold 6430 CPUs and one NVIDIA A800.

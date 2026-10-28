@@ -9,6 +9,8 @@ using std::isfinite; using std::fmin; using std::fmax; using std::fabs;
 struct Medium {
   const double *h,*vp,*vs,*rho,*ivp,*ivs;
   int L,wave; // wave=0: coupled P-SV; wave=1: SH
+  // Optional per-trace constants. Never cached by Python object address.
+  const double *ka=nullptr,*kb=nullptr,*gammk=nullptr;
 };
 
 MD_HD bool sh_has_guide(const Medium &m) {
@@ -23,11 +25,11 @@ MD_HD bool ambiguous_sh_cutoff(const Medium &m,double c,double f) {
 
 MD_HD double sh_secular(const Medium &m,double omega,double c) {
   const int top=m.vs[0]==0.0 ? 1:0, last=m.L-1;
-  const double k=omega/c, kb=omega/m.vs[last];
+  const double k=omega/c, kb=m.kb ? m.kb[last] : omega/m.vs[last];
   double e1=m.rho[last]*MD_SQRT((k+kb)*MD_FABS(k-kb));
   double e2=1.0/(m.vs[last]*m.vs[last]);
   for (int j=last-1;j>=top;--j) {
-    const double mu=m.rho[j]*m.vs[j]*m.vs[j], ka=omega/m.vs[j];
+    const double mu=m.rho[j]*m.vs[j]*m.vs[j], ka=m.kb ? m.kb[j] : omega/m.vs[j];
     const double r=MD_SQRT((k+ka)*MD_FABS(k-ka)), q=r*m.h[j];
     double cq,y,z;
     if(k<ka) {double sn; MD_SINCOS(q,&sn,&cq);y=sn/r;z=-r*sn;}
@@ -42,7 +44,7 @@ MD_HD double sh_secular(const Medium &m,double omega,double c) {
 
 MD_HD double evaluate(const Medium &m,double omega,double c) {
   if(m.wave==1)return sh_secular(m,omega,c);
-  return dunkin_secular<double,true>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,m.vs[0]==0.,false);
+  return dunkin_secular<double,true>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,m.vs[0]==0.,false,m.ka,m.kb,m.gammk);
 }
 
 MD_HD double density_base(const Medium &m,double c) {

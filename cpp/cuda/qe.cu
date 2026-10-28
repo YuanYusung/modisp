@@ -8,6 +8,11 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdint>
+#include <chrono>
+#include <cstring>
+#include <cstdlib>
+#include <vector>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include "common/physics.hpp"
@@ -26,6 +31,12 @@
 #ifndef MD_PREFIX_DENSE
 #define MD_PREFIX_DENSE 1
 #endif
+#ifndef MD_WARP_STATS
+#define MD_WARP_STATS 1
+#endif
+#ifndef MD_TRACE_CONSTANTS
+#define MD_TRACE_CONSTANTS 1
+#endif
 
 namespace py = pybind11;
 namespace qe {
@@ -36,16 +47,16 @@ constexpr unsigned CUTOFF = 1u << 4, NONFINITE = 1u << 5;
 constexpr unsigned REFINE_FAILED = 1u << 6, F_REJECTED = 1u << 7;
 enum Stat { EVALS, EXTREMA, BRACKETS, ADAPT_OK, DENSE_OK, FAILED,
             CAPACITY_HITS, CUTOFFS, NONFINITES, REFINE_FAILURES, SEARCHES,
-            ACCEPT_REJECTED, ANALYTIC_EMPTY, RANGE_EMPTY, VERIFICATIONS, CONFLICTS, NSTATS };
+            ACCEPT_REJECTED, ANALYTIC_EMPTY, RANGE_EMPTY, VERIFICATIONS, CONFLICTS, CACHE_HITS, CACHE_MISSES, NSTATS };
 const char *stat_names[NSTATS] = {
     "evaluations", "extrema_proposals", "brackets", "adaptive_converged",
     "dense_converged", "unconverged", "capacity_hits", "near_cutoff",
-    "nonfinite", "refinement_failed", "searches", "rejected_f", "analytical_empty", "range_empty", "verification_traces", "family_conflicts"};
+    "nonfinite", "refinement_failed", "searches", "rejected_f", "analytical_empty", "range_empty", "verification_traces", "family_conflicts", "cache_hits", "cache_misses"};
 
 struct Device {
   double *d, *a, *b, *r, *period, *bounds, *ia, *ib, *tx, *tn, *seeds, *cache_x, *cache_y;
   int *nt, *cache_n, *queue, *next_queue, *queue_n, *next_n, *cursor;
-  int wave, automatic, guarded;
+  int wave, automatic, guarded, profile;
   double *full_roots,*guard_roots;
   int *verify,*guard_count,*full_count;
   double *lo, *hi, *flo, *fhi, *roots, *previous, *output;
@@ -53,6 +64,13 @@ struct Device {
   unsigned *flags;
   unsigned long long *stats;
 };
+
+// All lanes reach this at the end of block-owned sampling work. Integer
+// reduction preserves counters; divergent refinement retains its own atomics.
+__device__ void add_sampling_stat(unsigned long long *address,unsigned long long value) {
+  if(MD_WARP_STATS){for(int d=16;d;d/=2)value+=__shfl_down_sync(0xffffffffu,value,d);if((threadIdx.x&31)==0&&value)atomicAdd(address,value);}
+  else if(value)atomicAdd(address,value);
+}
 
 __device__ md::Medium medium(Device st,int model,int L) {
   const size_t o=static_cast<size_t>(model)*L;
@@ -119,11 +137,11 @@ __global__ void prepare_models(Device st,int B,int L) {
   for(int j=threadIdx.x;j<st.nt[model];j+=blockDim.x){st.tx[static_cast<size_t>(model)*TABLE+j]=x[j];st.tn[static_cast<size_t>(model)*TABLE+j]=md::density_base(m,x[j]);}
 }
 
-__device__ double cached_value(Device st,int trace,const md::Medium &m,double omega,double c,unsigned long long &evals) {
+__device__ double cached_value(Device st,int trace,const md::Medium &m,double omega,double c,unsigned long long &evals,unsigned long long &hits) {
   if(!MD_VALUE_CACHE){++evals;return md::evaluate(m,omega,c);}
   int lo=0,hi=st.cache_n[trace];const size_t o=static_cast<size_t>(trace)*CACHE;
   while(lo<hi){int q=(lo+hi)/2;if(st.cache_x[o+q]<c)lo=q+1;else hi=q;}
-  if(lo<st.cache_n[trace]&&st.cache_x[o+lo]==c)return st.cache_y[o+lo];
+  if(lo<st.cache_n[trace]&&st.cache_x[o+lo]==c){if(st.profile)++hits;return st.cache_y[o+lo];}
   ++evals;return md::evaluate(m,omega,c);
 }
 
@@ -187,12 +205,15 @@ __global__ void initialize(Device st, int traces, int K,int L,int nf,int modes) 
 __device__ void adaptive_one(Device st,int L,int nf,int K,double delta,double tol,int lev,int t,double *sm) {
   double *x=sm, *y=x+CAP, *h=y+CAP, *a=h+L, *b=a+L, *r=b+L;
   double *ia=r+L, *ib=ia+L;
+  double *ka=ib+L,*kb=ka+L,*gammk=kb+L;
   __shared__ int n, extra, bad, overflow;
   const int model=t/nf;
   const size_t off=static_cast<size_t>(model)*L;
+  const double per=st.period[t%nf],omega=md::two_pi<double>()/per;
   for (int i=threadIdx.x; i<L; i+=blockDim.x) {
     h[i]=st.d[off+i]; a[i]=st.a[off+i]; b[i]=st.b[off+i]; r[i]=st.r[off+i];
     ia[i]=st.ia[off+i]; ib[i]=st.ib[off+i];
+    if(MD_TRACE_CONSTANTS){ka[i]=omega/a[i];kb[i]=b[i]==0.?0.:omega/b[i];const double z=b[i]/omega;gammk[i]=2.*z*z;}
   }
   for (int i=threadIdx.x; i<CAP; i+=blockDim.x) { x[i]=CUDART_INF; y[i]=0.0; }
   if (threadIdx.x==0) { bad=0; overflow=0; st.status[t]=0; }
@@ -202,8 +223,7 @@ __device__ void adaptive_one(Device st,int L,int nf,int K,double delta,double to
   // grid/range is retained for both independent dense fallback resolutions.
   if(st.guarded&&lev>0&&st.prev_count[t]==K&&!(st.flags[t]&(WORKSPACE|NONFINITE|REFINE_FAILED|512u)))upper=fmin(upper,st.previous[static_cast<size_t>(t)*K+K-1]*(1.+4.*tol));
   const double cmin=(st.automatic && lev<2)?fmin((lev==0?4.:2.)*st.bounds[2*(t/nf)],(st.bounds[2*(t/nf)]+upper)*.5):st.bounds[2*(t/nf)];
-  const md::Medium med{h,a,b,r,ia,ib,L,st.wave};
-  const double per=st.period[t%nf], omega=md::two_pi<double>()/per;
+  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr};
   if (!(upper>cmin)) { if (!threadIdx.x) st.count[t]=0; return; }
   const double nlo=md::density_base(med,cmin)/per;
   const double nhi=md::density_base(med,upper)/per;
@@ -246,9 +266,9 @@ __device__ void adaptive_one(Device st,int L,int nf,int K,double delta,double to
   sort_pairs(x,y,initial);
   if (!threadIdx.x) n=unique_pairs(x,y);
   __syncthreads();
-  unsigned long long evals=0, extrema=0;
+  unsigned long long evals=0, extrema=0, hits=0;
   for (int i=threadIdx.x; i<n; i+=blockDim.x) {
-    y[i]=cached_value(st,t,med,omega,x[i],evals);
+    y[i]=cached_value(st,t,med,omega,x[i],evals,hits);
     if (!isfinite(y[i])) atomicExch(&bad,1);
   }
   __syncthreads();
@@ -279,7 +299,7 @@ __device__ void adaptive_one(Device st,int L,int nf,int K,double delta,double to
       ++extrema;
       if (dest<CAP) {
         x[dest]=xe;
-        y[dest]=cached_value(st,t,med,omega,xe,evals);
+        y[dest]=cached_value(st,t,med,omega,xe,evals,hits);
         if (!isfinite(y[dest])) atomicExch(&bad,1);
       } else atomicExch(&overflow,1);
     }
@@ -292,8 +312,9 @@ __device__ void adaptive_one(Device st,int L,int nf,int K,double delta,double to
   __syncthreads();
   if(n<=CACHE && !overflow && !bad){for(int i=threadIdx.x;i<n;i+=blockDim.x){const size_t o=static_cast<size_t>(t)*CACHE+i;st.cache_x[o]=x[i];st.cache_y[o]=y[i];}}
   __syncthreads();if(!threadIdx.x)st.cache_n[t]=(n<=CACHE&&!overflow&&!bad)?n:0;
-  if (evals) atomicAdd(&st.stats[EVALS],evals);
-  if (extrema) atomicAdd(&st.stats[EXTREMA],extrema);
+  add_sampling_stat(&st.stats[EVALS],evals);
+  add_sampling_stat(&st.stats[EXTREMA],extrema);
+  if(st.profile){add_sampling_stat(&st.stats[CACHE_HITS],hits);add_sampling_stat(&st.stats[CACHE_MISSES],evals);}
   if (!threadIdx.x) {
     int nr=0;
     if(!overflow&&!bad&&n>0&&md::ambiguous_sh_cutoff(med,x[n-1],y[n-1])){bad=4;st.flags[t]|=CUTOFF;}
@@ -311,18 +332,20 @@ __device__ void adaptive_one(Device st,int L,int nf,int K,double delta,double to
 __device__ void dense_one(Device st,int L,int nf,int K,int grid_factor,int t,double *sm) {
   double *x=sm, *y=x+CAP, *h=y+CAP, *a=h+L, *b=a+L, *r=b+L;
   double *ia=r+L, *ib=ia+L;
+  double *ka=ib+L,*kb=ka+L,*gammk=kb+L;
   __shared__ int nr, bad;
   const size_t off=static_cast<size_t>(t/nf)*L;
+  const double omega=md::two_pi<double>()/st.period[t%nf];
   for (int i=threadIdx.x; i<L; i+=blockDim.x) {
     h[i]=st.d[off+i]; a[i]=st.a[off+i]; b[i]=st.b[off+i]; r[i]=st.r[off+i];
     ia[i]=st.ia[off+i]; ib[i]=st.ib[off+i];
+    if(MD_TRACE_CONSTANTS){ka[i]=omega/a[i];kb[i]=b[i]==0.?0.:omega/b[i];const double z=b[i]/omega;gammk[i]=2.*z*z;}
   }
   if (!threadIdx.x) { nr=0; bad=0; st.status[t]=0; atomicAdd(&st.stats[SEARCHES],1ULL); }
   __syncthreads();
   const double cmin=st.bounds[2*(t/nf)],upper=st.bounds[2*(t/nf)+1];
-  const md::Medium med{h,a,b,r,ia,ib,L,st.wave};
+  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr};
   if (!(upper>cmin)) { if (!threadIdx.x) st.count[t]=0; return; }
-  const double omega=md::two_pi<double>()/st.period[t%nf];
   // Scale dense fallback with the density estimate and water optical thickness,
   // with a 32768-cell floor and an explicit workspace limit.
   const double need=md::dense_workload(med,st.period[t%nf],cmin,upper);
@@ -350,7 +373,7 @@ __device__ void dense_one(Device st,int L,int nf,int K,int grid_factor,int t,dou
     // guarded ascending prefix is accepted/returned by either implementation.
     if(MD_PREFIX_DENSE && nr>=K && !bad)break;
   }
-  if (evals) atomicAdd(&st.stats[EVALS],evals);
+  add_sampling_stat(&st.stats[EVALS],evals);
   if (!threadIdx.x) {
     if (bad&1) { st.flags[t]|=NONFINITE; atomicAdd(&st.stats[NONFINITES],1ULL); }
     st.status[t]=bad; st.count[t]=bad ? -1 : min(nr,K);
@@ -493,35 +516,107 @@ template<class T> void alloc(T *&p, size_t n) { check(cudaMalloc(reinterpret_cas
 template<class T> void upload(T *p,const T *h,size_t n) { check(cudaMemcpy(p,h,n*sizeof(T),cudaMemcpyHostToDevice)); }
 template<class T> void download(T *h,const T *p,size_t n) { check(cudaMemcpy(h,p,n*sizeof(T),cudaMemcpyDeviceToHost)); }
 
+using HostClock=std::chrono::steady_clock;
+double host_seconds(HostClock::time_point t){return std::chrono::duration<double>(HostClock::now()-t).count();}
+int env_integer(const char *name,int fallback,int low,int high){const char *v=std::getenv(name);if(!v)return fallback;char *end=nullptr;long n=std::strtol(v,&end,10);if(!end||*end||n<low||n>high)throw std::invalid_argument(std::string("Invalid ")+name);return static_cast<int>(n);}
+
 class Solver {
   Device st_{};
-  int B_,L_,nf_,modes_,K_,blocks_,device_=0;
- public:
-  Solver(int B,int L,int nf,int modes):B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2) {
-    if (B<1 || L<1 || nf<1 || modes<1 || L>256 || modes>256)
-      throw py::value_error("QE geometry requires B,nf,modes>=1, 1<=L<=256, modes<=256");
-    const size_t models=static_cast<size_t>(B)*L, tr=static_cast<size_t>(B)*nf, roots=tr*K_;
-    check(cudaGetDevice(&device_));
-    try {
-      alloc(st_.d,models); alloc(st_.a,models); alloc(st_.b,models); alloc(st_.r,models);
-      alloc(st_.period,nf);alloc(st_.bounds,2*B);alloc(st_.ia,models);alloc(st_.ib,models);
-      alloc(st_.tx,static_cast<size_t>(B)*TABLE);alloc(st_.tn,static_cast<size_t>(B)*TABLE);alloc(st_.nt,B);alloc(st_.seeds,2*B);
-      alloc(st_.cache_x,tr*CACHE);alloc(st_.cache_y,tr*CACHE);alloc(st_.cache_n,tr);
-      alloc(st_.queue,tr);alloc(st_.next_queue,tr);alloc(st_.queue_n,1);alloc(st_.next_n,1);alloc(st_.cursor,1);
-      int device;check(cudaGetDevice(&device));cudaDeviceProp prop;check(cudaGetDeviceProperties(&prop,device));blocks_=2*prop.multiProcessorCount;
-      alloc(st_.lo,roots); alloc(st_.hi,roots); alloc(st_.flo,roots); alloc(st_.fhi,roots);
-      alloc(st_.roots,roots); alloc(st_.previous,roots); alloc(st_.output,tr*modes);
-      alloc(st_.count,tr); alloc(st_.prev_count,tr); alloc(st_.status,tr); alloc(st_.active,tr); alloc(st_.level,tr);
-      alloc(st_.flags,tr); alloc(st_.stats,NSTATS);
-      alloc(st_.full_roots,roots);alloc(st_.guard_roots,roots);alloc(st_.verify,tr);alloc(st_.guard_count,tr);
-      alloc(st_.full_count,tr);
-    } catch (...) { close(); throw; }
+  int B_,L_,nf_,modes_,K_,blocks_,device_=0,block_=256;
+  cudaStream_t stream_=nullptr;
+  void *host_input_=nullptr,*host_output_=nullptr;
+  double *hd_=nullptr,*ha_=nullptr,*hb_=nullptr,*hr_=nullptr,*hp_=nullptr,*hbound_=nullptr,*hv_=nullptr;
+  unsigned *hf_=nullptr;int *hl_=nullptr,*hc_=nullptr,*hactivity_=nullptr,*activity_=nullptr;
+  unsigned long long *hs_=nullptr;
+  size_t host_bytes_=0,device_bytes_=0;
+  struct Event {std::string name;cudaEvent_t begin=nullptr,end=nullptr;};
+  std::vector<Event> events_;
+  size_t event_index_=0;
+
+  template<class F> void measured(const char *name,bool profile,F f){
+    if(!profile){f();return;}
+    if(event_index_==events_.size()){
+      Event e;e.name=name;check(cudaEventCreate(&e.begin));
+      try{check(cudaEventCreate(&e.end));}catch(...){cudaEventDestroy(e.begin);throw;}
+      events_.push_back(e);
+    }
+    auto &e=events_[event_index_++];e.name=name;
+    check(cudaEventRecord(e.begin,stream_));f();check(cudaEventRecord(e.end,stream_));
   }
-  Solver(const Solver &)=delete;
-  ~Solver() { close(); }
-  void close() {
+  template<class T> void up(T *dst,const T *src,size_t n){check(cudaMemcpyAsync(dst,src,n*sizeof(T),cudaMemcpyHostToDevice,stream_));}
+  template<class T> void down(T *dst,const T *src,size_t n){check(cudaMemcpyAsync(dst,src,n*sizeof(T),cudaMemcpyDeviceToHost,stream_));}
+  void zero(void *dst,size_t n){check(cudaMemsetAsync(dst,0,n,stream_));}
+
+  void enqueue(int B,double tol,double accept,bool profile){
+    const size_t n=static_cast<size_t>(B)*L_;const int traces=B*nf_;
+    measured("h2d",profile,[&]{up(st_.d,hd_,n);up(st_.a,ha_,n);up(st_.b,hb_,n);up(st_.r,hr_,n);up(st_.period,hp_,nf_);up(st_.bounds,hbound_,2*B);});
+    measured("model_prepare",profile,[&]{prepare_models<<<B,256,0,stream_>>>(st_,B,L_);});
+    zero(st_.stats,NSTATS*sizeof(unsigned long long));
+    measured("initialize",profile,[&]{initialize<<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_,L_,nf_,modes_);});
+    const size_t sm=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*L_)*sizeof(double);
+    const double delta[4]={0.5,0.25,0.125,0.0625};int stage=0;
+    auto stages=[&](int begin){for(int lev=begin;lev<6;++lev){
+      if(profile)check(cudaMemcpyAsync(activity_+stage++,st_.queue_n,sizeof(int),cudaMemcpyDeviceToDevice,stream_));
+      zero(st_.cursor,sizeof(int));zero(st_.next_n,sizeof(int));
+      const int blocks=MD_ACTIVITY_QUEUE?std::min(traces,blocks_):traces;
+      measured(lev<4?"search_adaptive":"search_dense",profile,[&]{
+        if(lev<4)search<true><<<blocks,block_,sm,stream_>>>(st_,L_,nf_,K_,delta[lev],tol,lev);
+        else search<false><<<blocks,block_,sm,stream_>>>(st_,L_,nf_,K_,0.,tol,lev);
+      });
+      measured("refinement",profile,[&]{refine<<<(traces*K_+255)/256,256,0,stream_>>>(st_,traces,L_,nf_,K_,tol);});
+      measured("compare",profile,[&]{compare<<<(traces+255)/256,256,0,stream_>>>(st_,traces,L_,nf_,K_,modes_,tol,accept,lev,lev<3||lev==4,lev==5);});
+      check(cudaGetLastError());std::swap(st_.queue,st_.next_queue);std::swap(st_.queue_n,st_.next_n);
+    }};
+    stages(0);zero(st_.queue_n,sizeof(int));
+    measured("verification_prepare",profile,[&]{prepare_verification<<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_);});
+    st_.guarded=1;stages(0);zero(st_.queue_n,sizeof(int));
+    measured("reconcile",profile,[&]{reconcile<<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_,tol);});
+    st_.guarded=0;stages(4);
+    measured("final_statistics",profile,[&]{final_statistics<<<(traces+255)/256,256,0,stream_>>>(st_,traces);});
+    measured("d2h",profile,[&]{down(hv_,st_.output,static_cast<size_t>(B)*modes_*nf_);down(hf_,st_.flags,traces);down(hl_,st_.level,traces);down(hc_,st_.count,traces);down(hs_,st_.stats,NSTATS);if(profile)down(hactivity_,activity_,14);});
+    check(cudaGetLastError());
+  }
+ public:
+  Solver(int B,int L,int nf,int modes):B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2){
+    if(B<1||L<1||nf<1||modes<1||L>256||modes>256)throw py::value_error("QE geometry requires B,nf,modes>=1, 1<=L<=256, modes<=256");
+    const size_t models=static_cast<size_t>(B)*L,tr=static_cast<size_t>(B)*nf,roots=tr*K_;
+    check(cudaGetDevice(&device_));
+    try{
+      check(cudaStreamCreateWithFlags(&stream_,cudaStreamNonBlocking));
+      block_=env_integer("MODISP_CUDA_BLOCK",256,128,256);if(block_!=128&&block_!=256)throw std::invalid_argument("MODISP_CUDA_BLOCK must be 128 or 256");
+      cudaDeviceProp prop;check(cudaGetDeviceProperties(&prop,device_));blocks_=env_integer("MODISP_CUDA_BLOCKS_PER_SM",2,1,8)*prop.multiProcessorCount;
+      const int shared=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*L_)*sizeof(double);
+      // Use one maximum for all supported geometries: another concurrent
+      // solver must never lower this per-function attribute below our need.
+      if(shared>static_cast<int>(prop.sharedMemPerBlock)){const int maximum=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*256)*sizeof(double);check(cudaFuncSetAttribute(search<true>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));check(cudaFuncSetAttribute(search<false>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));}
+      auto allocate=[&](auto *&ptr,size_t count){alloc(ptr,count);device_bytes_+=count*sizeof(*ptr);};
+      allocate(st_.d,models);allocate(st_.a,models);allocate(st_.b,models);allocate(st_.r,models);
+      allocate(st_.period,nf);allocate(st_.bounds,2*B);allocate(st_.ia,models);allocate(st_.ib,models);
+      allocate(st_.tx,static_cast<size_t>(B)*TABLE);allocate(st_.tn,static_cast<size_t>(B)*TABLE);allocate(st_.nt,B);allocate(st_.seeds,2*B);
+      allocate(st_.cache_x,tr*CACHE);allocate(st_.cache_y,tr*CACHE);allocate(st_.cache_n,tr);
+      allocate(st_.queue,tr);allocate(st_.next_queue,tr);allocate(st_.queue_n,1);allocate(st_.next_n,1);allocate(st_.cursor,1);
+      allocate(st_.lo,roots);allocate(st_.hi,roots);allocate(st_.flo,roots);allocate(st_.fhi,roots);
+      allocate(st_.roots,roots);allocate(st_.previous,roots);allocate(st_.output,tr*modes);
+      allocate(st_.count,tr);allocate(st_.prev_count,tr);allocate(st_.status,tr);allocate(st_.active,tr);allocate(st_.level,tr);
+      allocate(st_.flags,tr);allocate(st_.stats,NSTATS);allocate(st_.full_roots,roots);allocate(st_.guard_roots,roots);allocate(st_.verify,tr);allocate(st_.guard_count,tr);allocate(st_.full_count,tr);allocate(activity_,14);
+      const size_t in_bytes=(4*models+nf+2*B)*sizeof(double);
+      const size_t output_base=tr*modes*sizeof(double)+3*tr*sizeof(int);
+      const size_t stats_offset=(output_base+7)&~size_t(7);
+      const size_t out_bytes=stats_offset+NSTATS*sizeof(unsigned long long)+14*sizeof(int);
+      check(cudaHostAlloc(&host_input_,in_bytes,cudaHostAllocDefault));
+      check(cudaHostAlloc(&host_output_,out_bytes,cudaHostAllocDefault));host_bytes_=in_bytes+out_bytes;
+      hd_=static_cast<double*>(host_input_);ha_=hd_+models;hb_=ha_+models;hr_=hb_+models;hp_=hr_+models;hbound_=hp_+nf;
+      hv_=static_cast<double*>(host_output_);hf_=reinterpret_cast<unsigned*>(hv_+tr*modes);hl_=reinterpret_cast<int*>(hf_+tr);hc_=hl_+tr;
+      hs_=reinterpret_cast<unsigned long long*>(static_cast<char*>(host_output_)+stats_offset);hactivity_=reinterpret_cast<int*>(hs_+NSTATS);
+    }catch(...){close();throw;}
+  }
+  Solver(const Solver&)=delete;
+  ~Solver(){close();}
+  void close(){
     int current=device_;cudaGetDevice(&current);cudaSetDevice(device_);
-#define QE_FREE(name) if (st_.name) { cudaFree(st_.name); st_.name=nullptr; }
+    if(stream_)cudaStreamSynchronize(stream_);
+    for(auto &e:events_){if(e.begin)cudaEventDestroy(e.begin);if(e.end)cudaEventDestroy(e.end);}events_.clear();
+#define QE_FREE(name) if(st_.name){cudaFree(st_.name);st_.name=nullptr;}
     QE_FREE(d) QE_FREE(a) QE_FREE(b) QE_FREE(r) QE_FREE(period) QE_FREE(bounds) QE_FREE(ia) QE_FREE(ib)
     QE_FREE(tx) QE_FREE(tn) QE_FREE(nt) QE_FREE(seeds) QE_FREE(cache_x) QE_FREE(cache_y) QE_FREE(cache_n)
     QE_FREE(queue) QE_FREE(next_queue) QE_FREE(queue_n) QE_FREE(next_n) QE_FREE(cursor)
@@ -529,79 +624,54 @@ class Solver {
     QE_FREE(count) QE_FREE(prev_count) QE_FREE(status) QE_FREE(active) QE_FREE(level) QE_FREE(flags) QE_FREE(stats)
     QE_FREE(full_roots) QE_FREE(guard_roots) QE_FREE(verify) QE_FREE(guard_count) QE_FREE(full_count)
 #undef QE_FREE
-    cudaSetDevice(current);
+    if(activity_){cudaFree(activity_);activity_=nullptr;}
+    if(host_input_){cudaFreeHost(host_input_);host_input_=nullptr;}if(host_output_){cudaFreeHost(host_output_);host_output_=nullptr;}
+    if(stream_){cudaStreamDestroy(stream_);stream_=nullptr;}cudaSetDevice(current);
   }
   py::tuple run(py::array_t<double,py::array::c_style|py::array::forcecast> d,
                 py::array_t<double,py::array::c_style|py::array::forcecast> a,
                 py::array_t<double,py::array::c_style|py::array::forcecast> b,
                 py::array_t<double,py::array::c_style|py::array::forcecast> r,
                 py::array_t<double,py::array::c_style|py::array::forcecast> periods,
-                py::array_t<double,py::array::c_style|py::array::forcecast> bounds,double tol,double f_accept,int wave,bool automatic) {
-    if (!st_.d) throw std::runtime_error("QE solver is closed");
-    check(cudaSetDevice(device_));
-    if (d.ndim()!=2 || d.shape(0)<1 || d.shape(0)>B_ || d.shape(1)!=L_)
-      throw py::value_error("QE model shape exceeds allocated geometry");
-    for (auto *v:{&a,&b,&r})
-      if (v->ndim()!=2 || v->shape(0)!=d.shape(0) || v->shape(1)!=L_)
-        throw py::value_error("QE model shapes must agree");
-    if (periods.ndim()!=1 || periods.size()!=nf_ || bounds.ndim()!=2 || bounds.shape(0)!=d.shape(0) || bounds.shape(1)!=2 || !(tol>0))
-      throw py::value_error("QE invalid periods, range or tolerance");
-    const int B=static_cast<int>(d.shape(0)), traces=B*nf_;
-    py::array_t<double> out({B,modes_,nf_});
-    py::array_t<unsigned> flags({B,nf_});
-    py::array_t<int> levels({B,nf_}), counts({B,nf_});
-    unsigned long long counters[NSTATS]{};
+                py::array_t<double,py::array::c_style|py::array::forcecast> bounds,double tol,double accept,int wave,bool automatic,bool profile=false){
+    if(!st_.d)throw std::runtime_error("QE solver is closed");check(cudaSetDevice(device_));
+    if(d.ndim()!=2||d.shape(0)<1||d.shape(0)>B_||d.shape(1)!=L_)throw py::value_error("QE model shape exceeds allocated geometry");
+    for(auto *v:{&a,&b,&r})if(v->ndim()!=2||v->shape(0)!=d.shape(0)||v->shape(1)!=L_)throw py::value_error("QE model shapes must agree");
+    if(periods.ndim()!=1||periods.size()!=nf_||bounds.ndim()!=2||bounds.shape(0)!=d.shape(0)||bounds.shape(1)!=2||!(tol>0))throw py::value_error("QE invalid periods, range or tolerance");
+    const int B=static_cast<int>(d.shape(0)),traces=B*nf_;const size_t n=static_cast<size_t>(B)*L_;
+    py::array_t<double> out({B,modes_,nf_});py::array_t<unsigned> flags({B,nf_});py::array_t<int> levels({B,nf_}),counts({B,nf_});
+    double pack_s=0.,unpack_s=0.;
     {
-      py::gil_scoped_release release;
-      const size_t n=static_cast<size_t>(B)*L_;
-      upload(st_.d,d.data(),n); upload(st_.a,a.data(),n); upload(st_.b,b.data(),n); upload(st_.r,r.data(),n);
-      upload(st_.period,periods.data(),nf_);upload(st_.bounds,bounds.data(),2*B);st_.wave=wave;st_.automatic=automatic;st_.guarded=0;
-      prepare_models<<<B,256>>>(st_,B,L_);
-      check(cudaMemset(st_.stats,0,NSTATS*sizeof(unsigned long long)));
-      initialize<<<(traces+255)/256,256>>>(st_,traces,K_,L_,nf_,modes_);
-      const size_t sm=(2*CAP+6*L_)*sizeof(double);
-      const double delta[4]={0.5,0.25,0.125,0.0625};
-      auto stages=[&](int begin){for (int lev=begin; lev<6; ++lev) {
-        check(cudaMemset(st_.cursor,0,sizeof(int)));check(cudaMemset(st_.next_n,0,sizeof(int)));
-        const int blocks=MD_ACTIVITY_QUEUE?std::min(traces,blocks_):traces;
-        if(lev<4)search<true><<<blocks,256,sm>>>(st_,L_,nf_,K_,delta[lev],tol,lev);
-        else search<false><<<blocks,256,sm>>>(st_,L_,nf_,K_,0.,tol,lev);
-        refine<<<(traces*K_+255)/256,256>>>(st_,traces,L_,nf_,K_,tol);
-        // Never compare an adaptive set directly with the first dense set:
-        // the fallback must agree with its own doubled-resolution scan.
-        compare<<<(traces+255)/256,256>>>(st_,traces,L_,nf_,K_,modes_,tol,f_accept,lev,lev<3 || lev==4,lev==5);
-        check(cudaGetLastError());std::swap(st_.queue,st_.next_queue);std::swap(st_.queue_n,st_.next_n);
-      }};
-      stages(0);
-      check(cudaMemset(st_.queue_n,0,sizeof(int)));
-      prepare_verification<<<(traces+255)/256,256>>>(st_,traces,K_);
-      st_.guarded=1;stages(0);
-      check(cudaMemset(st_.queue_n,0,sizeof(int)));
-      reconcile<<<(traces+255)/256,256>>>(st_,traces,K_,tol);
-      st_.guarded=0;stages(4);
-      final_statistics<<<(traces+255)/256,256>>>(st_,traces);
-      check(cudaDeviceSynchronize());
-      download(out.mutable_data(),st_.output,static_cast<size_t>(B)*modes_*nf_);
-      download(flags.mutable_data(),st_.flags,traces); download(levels.mutable_data(),st_.level,traces);
-      download(counts.mutable_data(),st_.count,traces); download(counters,st_.stats,NSTATS);
+      py::gil_scoped_release release;auto t=profile?HostClock::now():HostClock::time_point{};
+      std::memcpy(hd_,d.data(),n*8);std::memcpy(ha_,a.data(),n*8);std::memcpy(hb_,b.data(),n*8);std::memcpy(hr_,r.data(),n*8);std::memcpy(hp_,periods.data(),nf_*8);std::memcpy(hbound_,bounds.data(),2*B*8);
+      if(profile)pack_s=host_seconds(t);
+      st_.wave=wave;st_.automatic=automatic;st_.guarded=0;st_.profile=profile;event_index_=0;
+      enqueue(B,tol,accept,profile);
+      check(cudaStreamSynchronize(stream_));
+      t=profile?HostClock::now():HostClock::time_point{};
+      std::memcpy(out.mutable_data(),hv_,static_cast<size_t>(B)*modes_*nf_*8);std::memcpy(flags.mutable_data(),hf_,traces*4);std::memcpy(levels.mutable_data(),hl_,traces*4);std::memcpy(counts.mutable_data(),hc_,traces*4);
+      if(profile)unpack_s=host_seconds(t);
     }
     py::dict stats;
-    for (int i=0;i<NSTATS;++i) stats[stat_names[i]]=counters[i];
-    stats["strategy"]="qe_adaptive";
-    stats["capacity"]=CAP;stats["density_table_knots"]=129;stats["cache_capacity"]=CACHE;
+    for(int i=0;i<NSTATS;++i)if(i<CACHE_HITS||profile)stats[stat_names[i]]=hs_[i];
+    stats["strategy"]="qe_adaptive";stats["capacity"]=CAP;stats["density_table_knots"]=129;stats["cache_capacity"]=CACHE;
+    stats["pinned_host_bytes"]=host_bytes_;stats["device_workspace_bytes"]=device_bytes_;
+    if(profile){py::dict timing;for(size_t i=0;i<event_index_;++i){float ms=0.;check(cudaEventElapsedTime(&ms,events_[i].begin,events_[i].end));py::str key(events_[i].name);double prev=timing.contains(key)?timing[key].cast<double>():0.;timing[key]=prev+ms*.001;}
+      timing["host_pack"]=pack_s;timing["host_unpack"]=unpack_s;stats["timings_s"]=timing;py::list activity;for(int j=0;j<14;++j)activity.append(hactivity_[j]);stats["active_traces_by_stage"]=activity;}
     return py::make_tuple(out,flags,stats,levels,counts);
   }
 };
+
 } // namespace qe
 
 void bind_qe(py::module_ &m) {
   m.def("available",[](int device){int n=0;return cudaGetDeviceCount(&n)==cudaSuccess&&device>=0&&device<n;},py::arg("device")=0);
   m.def("set_device",[](int device){qe::check(cudaSetDevice(device));});
   m.def("memory_info",[](){size_t free,total;qe::check(cudaMemGetInfo(&free,&total));return py::make_tuple(free,total);});
-  m.def("qe_kernel_report",[](int L){cudaFuncAttributes a;qe::check(cudaFuncGetAttributes(&a,qe::search<true>));py::dict d;d["registers_per_thread"]=a.numRegs;d["static_shared_bytes"]=a.sharedSizeBytes;d["dynamic_shared_bytes"]=(2*qe::CAP+6*L)*sizeof(double);d["cache_points_per_trace"]=qe::CACHE;d["table_capacity_per_model"]=qe::TABLE;return d;});
+  m.def("qe_kernel_report",[](int L){cudaFuncAttributes a;qe::check(cudaFuncGetAttributes(&a,qe::search<true>));py::dict d;d["registers_per_thread"]=a.numRegs;d["static_shared_bytes"]=a.sharedSizeBytes;d["local_bytes_per_thread"]=a.localSizeBytes;int block=qe::env_integer("MODISP_CUDA_BLOCK",256,128,256),active=0;qe::check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&active,qe::search<true>,block,(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L)*sizeof(double)));d["search_block_threads"]=block;d["max_active_blocks_per_sm"]=active;d["configured_blocks_per_sm"]=qe::env_integer("MODISP_CUDA_BLOCKS_PER_SM",2,1,8);d["dynamic_shared_bytes"]=(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L)*sizeof(double);d["cache_points_per_trace"]=qe::CACHE;d["table_capacity_per_model"]=qe::TABLE;return d;});
   py::class_<qe::Solver>(m,"QeSolver")
     .def(py::init<int,int,int,int>(),py::arg("B"),py::arg("L"),py::arg("nf"),py::arg("nmodes"))
     .def("run",&qe::Solver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),
-         py::arg("periods"),py::arg("bounds"),py::arg("c_tol_rel")=1e-6,py::arg("f_accept")=1.0,py::arg("wave")=0,py::arg("automatic")=false)
+         py::arg("periods"),py::arg("bounds"),py::arg("c_tol_rel")=1e-6,py::arg("f_accept")=1.0,py::arg("wave")=0,py::arg("automatic")=false,py::arg("profile")=false)
     .def("close",&qe::Solver::close);
 }

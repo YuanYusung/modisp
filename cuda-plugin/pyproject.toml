@@ -4,14 +4,14 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "modisp-cuda12"
-version = "0.2.0"
+version = "0.2.1"
 description = "Optional CUDA 12 backend for modisp"
 requires-python = ">=3.10"
 license = "BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-12.6"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*"]
 readme = "README.md"
 authors = [{name = "Yuan Yusong"}]
-dependencies = ["modisp==0.2.0"]
+dependencies = ["modisp==0.2.1"]
 
 [tool.scikit-build]
 wheel.packages = ["python/modisp_cuda"]

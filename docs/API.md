@@ -65,6 +65,7 @@ reuse their native thread pool or device allocation across compatible calls.
 | `search_strategy` | `"qe_adaptive"` | FP64 adaptive search; `"uniform"` is legacy CUDA solid Rayleigh only |
 | `workspace_bytes` | `256*1024**2` | Native work-buffer budget, excluding inputs/results and CUDA context |
 | `chunk_size` | `None` | Optional model-count cap per chunk |
+| `profile` | `False` | Collect stage timings and cache/queue analysis in `stats()` |
 | `nc`, `block` | `512`, `256` | Legacy uniform settings |
 
 An explicit unavailable CUDA request raises `BackendUnavailableError`.
@@ -109,6 +110,15 @@ workspace or root-conflict flag.
 A budget too small for one model raises `MemoryError` before allocation.
 Hardware allocation and driver failures raise explicitly. `stats()` reports
 algorithm counters and estimated native work-buffer bytes.
+
+Version 0.2.1 retains an existing compatible allocation for smaller tail calls;
+`capacity_models` reports this high-water capacity and `engine_allocations`
+reports new allocations during the latest call. A reduced budget/chunk cap or
+changed geometry still replaces the workspace. Input values are refreshed on
+every call, including arrays modified in place. With profiling enabled,
+`timings_s` contains stage durations; summed CPU worker times overlap wall time.
+See [performance measurement](PERFORMANCE.md) for interpretation and the
+streaming ModePhys benchmark tools.
 
 ## Model helpers
 

@@ -226,11 +226,11 @@ def compare(output, reference, stable, unresolved=0, unresolved_mask=None):
     return metrics
 
 
-def run_modisp_accuracy(suite, indices, backend):
+def run_modisp_accuracy(suite, indices, backend, threads=1):
     import modisp
 
     selected = take_models(suite, indices)
-    with modisp.Solver(backend=backend, threads=1, cmin=cmin_for(suite)) as solver:
+    with modisp.Solver(backend=backend, threads=threads, cmin=cmin_for(suite)) as solver:
         result = solver(
             *(selected[key] for key in FIELDS),
             suite["data"]["periods"], nmodes=NMODES, wave="rayleigh",
@@ -369,11 +369,11 @@ def accuracy(args, suites, environment):
         full_stable = stable_mask(suite)
         stable = full_stable[indices]
         suite_report = {"indices": indices, "solvers": {}}
-        for solver_name in ("modisp-cpu", "modisp-cuda", "disba", "qed"):
+        for solver_name in args.solvers:
             if solver_name.startswith("modisp"):
                 backend = solver_name.split("-")[1]
                 output, status, unresolved_mask = run_modisp_accuracy(
-                    suite, indices, backend
+                    suite, indices, backend, args.threads
                 )
                 metrics = compare(
                     output, reference, stable, unresolved_mask=unresolved_mask
@@ -415,6 +415,10 @@ def accuracy(args, suites, environment):
         summary["suites"][suite["name"]] = suite_report
     write_json(args.out / "summary.json", summary)
     write_accuracy_readme(args.out / "README.md", summary)
+    if args.require_clean_modisp:
+        for solver, values in summary["overall"].items():
+            if solver.startswith("modisp") and any(values[k] for k in ("wrong", "missing", "extra", "unresolved")):
+                raise SystemExit(f"numerical acceptance failed for {solver}; see summary.json")
 
 
 def write_accuracy_readme(path, summary):
@@ -810,7 +814,10 @@ def parse_args():
                         help="accuracy: canonical/all QED, 4 per random_L, 8 seed models")
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("accuracy", parents=[common], help="compare complete outputs")
+    accuracy_parser = subparsers.add_parser("accuracy", parents=[common], help="compare complete outputs")
+    accuracy_parser.add_argument("--solvers", nargs="+", choices=("modisp-cpu", "modisp-cuda", "disba", "qed"), default=["modisp-cpu", "modisp-cuda", "disba", "qed"])
+    accuracy_parser.add_argument("--threads", type=int, default=1)
+    accuracy_parser.add_argument("--require-clean-modisp", action="store_true")
     performance_parser = subparsers.add_parser(
         "performance", parents=[common], help="measure fixed seed batches"
     )
@@ -821,6 +828,8 @@ def parse_args():
     args = parser.parse_args()
     if args.repeats < 1 or any(batch < 1 for batch in args.batches):
         parser.error("--repeats and every --batches value must be positive")
+    if not 1 <= getattr(args, "threads", 1) <= 256:
+        parser.error("--threads must be 1..256")
     if len(set(args.batches)) != len(args.batches):
         parser.error("--batches values must be unique")
     if args.command == "performance" and len(set(args.solvers)) != len(args.solvers):

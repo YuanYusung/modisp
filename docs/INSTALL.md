@@ -7,7 +7,7 @@ The Python import package and command-line program are both named `modisp`.
 ```sh
 python -m venv .venv
 # Activate the environment using your shell's normal command.
-python -m pip install /path/to/modisp-0.2.0-<matching-tags>.whl
+python -m pip install /path/to/modisp-0.2.1-<matching-tags>.whl
 modisp doctor
 python /path/to/examples/quickstart.py
 ```
@@ -21,7 +21,7 @@ and disba/Numba) are optional.
 Install the exact matching plugin after the CPU package:
 
 ```sh
-python -m pip install /path/to/modisp_cuda12-0.2.0-<matching-tags>.whl
+python -m pip install /path/to/modisp_cuda12-0.2.1-<matching-tags>.whl
 modisp doctor
 ```
 
@@ -36,7 +36,7 @@ CPU builds require CMake >=3.22, a C++17 compiler and Python development
 headers:
 
 ```sh
-python -m pip install /path/to/modisp-0.2.0.tar.gz
+python -m pip install /path/to/modisp-0.2.1.tar.gz
 ```
 
 To build a wheel explicitly:
@@ -50,7 +50,7 @@ The plugin source distribution is self-contained and requires a CUDA 12
 toolkit plus a supported host compiler:
 
 ```sh
-CUDACXX=/usr/local/cuda/bin/nvcc python -m pip install /path/to/modisp_cuda12-0.2.0.tar.gz
+CUDACXX=/usr/local/cuda/bin/nvcc python -m pip install /path/to/modisp_cuda12-0.2.1.tar.gz
 ```
 
 For a combined source tree, first run `python tools/prepare_release.py` to copy
@@ -64,8 +64,8 @@ no source-tree build directory or `PYTHONPATH` is needed at runtime.
 Provide a wheelhouse with runtime dependencies and matching modisp wheels:
 
 ```sh
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.2.0
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp-cuda12==0.2.0
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.2.1
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp-cuda12==0.2.1
 ```
 
 For an offline source build, also collect scikit-build-core, pybind11 and their

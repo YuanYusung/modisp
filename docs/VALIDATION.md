@@ -1,9 +1,42 @@
-# modisp 0.2.0 validation
+# Validation
+
+## 0.2.1 — 2026-10-28
+
+Installed-wheel checks run outside the source tree:
+
+| Platform | Python | Backend | Public suite | Additional checks |
+|---|---|---|---|---|
+| macOS arm64 | 3.12.12 | CPU | 49 passed, 3 CUDA-only skipped | pip check, installed CLI/smoke |
+| Ubuntu 22.04 x86_64 | 3.10.12 | CPU | 49 passed, 3 CUDA-only skipped | pip check, CLI, examples |
+| Same host, A800/sm80, CUDA 12.6 | 3.10.12 | CUDA | 52 passed | 7 memcheck tests; 0 errors, 0 leaked bytes |
+
+The 11 independent solid-Rayleigh reference suites contain 171 models, 6,083
+period traces and 24,332 stable mode cells. All cells were judged; none was
+excluded as reference-unstable. CPU and CUDA each have zero wrong, missing, extra
+or unresolved results, with maximum common absolute error 2.586418e-7 km/s.
+The threshold remains max(3e-6, 2e-6*abs(reference)) km/s.
+
+The separate public extreme-fixture set retains four unresolved traces per
+backend from 0.2.0: all three B10000 fixtures and witness_model9384_period11.
+Their NaNs, status, flags and root counts match the baseline. These cases are
+not part of the 6,083-trace archive above. Passing their tests validates honest
+failure signaling; it does not mean those physical roots were recovered. Seven
+previously successful witness fixtures now explicitly reject an all-UNRESOLVED
+regression in CI.
+
+The 1,024-model first/last before/after checks and all eight full Base NPY files
+retain exact numerical/diagnostic identity. Changed input values, tail capacity,
+concurrent solvers, 256 layers, damaged-output rejection and interrupted resume
+are tested. See [performance measurements](PERFORMANCE.md) and the compact
+[numeric receipt](benchmarks/modephys-0.2.1.json). Raw models/results remain in
+the separate validation archive.
+
+## 0.2.0 release archive
 
 This document records checks executed for this release. Build configuration and
 unexecuted platform combinations are not treated as validation evidence.
 
-## Acceptance scope
+### Acceptance scope
 
 The public suite covers CPU/CUDA numerical consistency, multimode Rayleigh and
 Love solutions, surface-water and Scholte cases, analytic half-space/two-layer
@@ -15,7 +48,7 @@ run separately with `MODISP_TEST_BACKEND`; the legacy uniform compatibility test
 runs only on CUDA. Additional smoke checks cover examples, `doctor`, `forward`,
 package metadata and installed extension paths.
 
-## Release results
+### Release results
 
 | Platform | Python | Backend | Public suite | Installation and smoke |
 |---|---|---|---|---|
@@ -28,7 +61,7 @@ test dependency. `pip check` passed in the release environments. On the A800,
 `backend="auto"` selected CUDA, and explicit CPU/CUDA CLI runs completed with
 installed extensions loaded from the isolated `.venv-0.2.0` environment.
 
-## External solid-Rayleigh accuracy
+### External solid-Rayleigh accuracy
 
 Measured on 2026-10-28 on the Linux host above. The comparison used all 11
 archived suites: 171 models, 6083 period traces and four requested Rayleigh
@@ -51,7 +84,7 @@ The raw outputs, per-suite reports, input hashes and environment are retained in
 the external release archive under `accuracy-full/`; they are not bundled in the
 public source or runtime distributions.
 
-## External solid-Rayleigh performance
+### External solid-Rayleigh performance
 
 The fixed-shape performance comparison used the first 64 `seed20260916` models,
 `L=10`, `T=64`, four modes and `cmin=0.2`. Each configuration recorded
@@ -81,7 +114,7 @@ independent reference.
 | QEDispInv, serial | 8 | 0.116775 | 0.117171 | 68.276 |
 | QEDispInv, serial | 64 | 0.870068 | 0.864273 | 74.051 |
 
-### GPU-only 1,000-task run
+#### GPU-only 1,000-task run
 
 At the user's direction, the larger-batch measurement was run on the CUDA
 backend only. It submits **1,000 solve tasks using 64 independent baseline

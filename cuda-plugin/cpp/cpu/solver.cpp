@@ -3,6 +3,7 @@
 #include <pybind11/numpy.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -18,6 +19,8 @@ using Array=py::array_t<double,py::array::c_style|py::array::forcecast>;
 constexpr int CAP=2048;
 using Point=std::pair<double,double>;
 using Counters=std::array<unsigned long long,16>;
+using Clock=std::chrono::steady_clock;
+double seconds(Clock::time_point t){return std::chrono::duration<double>(Clock::now()-t).count();}
 const char *counter_names[]={"evaluations","extrema_proposals","brackets","adaptive_converged","dense_converged","unconverged","capacity_hits","near_cutoff","nonfinite","refinement_failed","searches","rejected_f","analytical_empty","range_empty","verification_traces","family_conflicts"};
 extern "C" void md_dunkin_grid(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
 extern "C" void md_dunkin_grid_f32(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
@@ -51,15 +54,23 @@ class Pool {
 struct Model {
   md::Medium view;
   std::vector<double> ia,ib,tx,tn;
+  double seed,water_seed;
 };
 struct Scratch {
-  std::vector<Point> points,extra,cache;
-  std::vector<double> roots,previous;
+  std::vector<Point> points,extra,cache,merged;
+  std::vector<double> roots,previous,coarse,full,guarded,ka,kb,gammk;
+  md::Medium medium{};
+  bool profile=false;
+  double sample_s=0.,inverse_s=0.,sort_s=0.,refine_s=0.,adaptive_s=0.,dense_s=0.;
+  unsigned long long cache_hits=0,cache_misses=0;
   Counters stats{};
-  Scratch(){points.reserve(CAP);extra.reserve(CAP);cache.reserve(CAP);}
+  Scratch(){points.reserve(CAP);extra.reserve(CAP);cache.reserve(CAP);merged.reserve(CAP);}
 };
 
-double evaluate(const md::Medium &m,double omega,double c,Scratch &w){++w.stats[0];return md::evaluate(m,omega,c);}
+double evaluate(const md::Medium &m,double omega,double c,Scratch &w){
+  ++w.stats[0];if(!w.profile)return md::evaluate(m,omega,c);
+  const auto t=Clock::now();double y=md::evaluate(m,omega,c);w.sample_s+=seconds(t);return y;
+}
 void unique_points(std::vector<Point> &p){
   std::sort(p.begin(),p.end(),[](const Point&a,const Point&b){return a.first<b.first;});
   p.erase(std::unique(p.begin(),p.end(),[](const Point&a,const Point&b){return a.first==b.first;}),p.end());
@@ -77,7 +88,7 @@ bool collect_roots(const md::Medium &m,double omega,Scratch &w,int K,double tol,
       }else return false;
     }else if(fb!=0.&&std::signbit(fa)!=std::signbit(fb)){
       ++w.stats[2];
-      if(static_cast<int>(roots.size())<K){int ev=0;double r=md::refine_root(m,omega,a,b,fa,fb,tol,ev);w.stats[0]+=ev;if(!std::isfinite(r)){++w.stats[9];return false;}roots.push_back(r);}
+      if(static_cast<int>(roots.size())<K){int ev=0;const auto t=w.profile?Clock::now():Clock::time_point{};double r=md::refine_root(m,omega,a,b,fa,fb,tol,ev);if(w.profile)w.refine_s+=seconds(t);w.stats[0]+=ev;if(!std::isfinite(r)){++w.stats[9];return false;}roots.push_back(r);}
     }
   }
   if(last&&p.size()>1&&p.back().second==0.){
@@ -88,7 +99,7 @@ bool collect_roots(const md::Medium &m,double omega,Scratch &w,int K,double tol,
 }
 
 bool search_adaptive(const Model &model,double period,double lo,double hi,double delta,int K,double tol,Scratch &w,unsigned &flags,bool shifted=false){
-  const auto &m=model.view;const double freq=1./period,omega=md::two_pi<double>()/period;
+  const auto &m=w.medium;const double freq=1./period,omega=md::two_pi<double>()/period;
   const double nlo=freq*md::density_base(m,lo),nhi=freq*md::density_base(m,hi),step=delta*.25;
   const double count=std::ceil(std::fmax(0.,nhi-nlo)/step);
   w.roots.clear();w.points.clear();
@@ -97,23 +108,27 @@ bool search_adaptive(const Model &model,double period,double lo,double hi,double
   auto point=[&](double c){
     if(c<lo||c>hi||!std::isfinite(c))return;
     auto it=std::lower_bound(w.cache.begin(),w.cache.end(),Point(c,-INFINITY));
-    const double f=(it!=w.cache.end()&&it->first==c)?it->second:evaluate(m,omega,c,w);
+    const bool hit=it!=w.cache.end()&&it->first==c;
+    if(w.profile){if(hit)++w.cache_hits;else ++w.cache_misses;}
+    const double f=hit?it->second:evaluate(m,omega,c,w);
     w.points.emplace_back(c,f);
   };
   for(int j=0;j<64;++j)point(lo+(hi-lo)*(shifted&&j>0&&j<63?(j-.5)/62.:j/63.));
   for(int j=0;j<m.L;++j)for(double v:{m.vp[j],m.vs[j]})for(int side=-1;side<=1;++side)point(v*(1.+side*1e-7));
-  const int top=m.vs[0]==0.?1:0;
-  point(m.wave ? m.vs[top] : md::rayleigh_reference(m.vp[top],m.vs[top]));
-  if(!m.wave&&top)point(md::scholte_reference(m.vp[0],m.rho[0],m.vp[1],m.vs[1],m.rho[1]));
+  point(model.seed);
+  if(!m.wave&&m.vs[0]==0.)point(model.water_seed);
   for(int j=1;j<=static_cast<int>(count);++j){
     const double target=(nlo+(j-(shifted?.5:0.))*step)/freq;
     if(target<model.tn.back()){
+      const auto t=w.profile?Clock::now():Clock::time_point{};
       const double c=md::inverse_density(m,model.tx.data(),model.tn.data(),model.tx.size(),target);
+      if(w.profile)w.inverse_s+=seconds(t);
       if(!std::isfinite(c)||std::fabs(freq*(md::density_base(m,c)-target))>delta*1e-3){flags|=512;return false;}
       point(c);
     }
   }
-  unique_points(w.points);
+  auto sort_start=w.profile?Clock::now():Clock::time_point{};
+  unique_points(w.points);if(w.profile)w.sort_s+=seconds(sort_start);
   if(w.points.size()>CAP){flags|=8;++w.stats[6];return false;}
   for(int round=0;round<3;++round){
     w.extra.clear();
@@ -133,10 +148,13 @@ bool search_adaptive(const Model &model,double period,double lo,double hi,double
     }
     if(w.extra.empty())break;
     if(w.points.size()+w.extra.size()>CAP){flags|=8;++w.stats[6];return false;}
+    sort_start=w.profile?Clock::now():Clock::time_point{};
     std::sort(w.extra.begin(),w.extra.end());
-    const auto old=w.points.size();w.points.insert(w.points.end(),w.extra.begin(),w.extra.end());
-    std::inplace_merge(w.points.begin(),w.points.begin()+old,w.points.end());
+    w.merged.clear();
+    std::merge(w.points.begin(),w.points.end(),w.extra.begin(),w.extra.end(),std::back_inserter(w.merged));
+    w.points.swap(w.merged);
     w.points.erase(std::unique(w.points.begin(),w.points.end(),[](const Point&a,const Point&b){return a.first==b.first;}),w.points.end());
+    if(w.profile)w.sort_s+=seconds(sort_start);
   }
   w.cache=w.points;
   if(!w.points.empty()&&md::ambiguous_sh_cutoff(m,w.points.back().first,w.points.back().second)){flags|=16;return false;}
@@ -145,7 +163,7 @@ bool search_adaptive(const Model &model,double period,double lo,double hi,double
 }
 
 bool search_dense(const Model &model,double period,double lo,double hi,int factor,int K,double tol,Scratch &w,unsigned &flags){
-  const auto &m=model.view;double need=md::dense_workload(m,period,lo,hi);
+  const auto &m=w.medium;double need=md::dense_workload(m,period,lo,hi);
   w.roots.clear();++w.stats[10];
   if(!std::isfinite(need)||need>524288.){flags|=8;++w.stats[6];return false;}
   int cells=32768;while(cells<need)cells*=2;cells*=factor;
@@ -165,40 +183,53 @@ bool search_dense(const Model &model,double period,double lo,double hi,int facto
 
 class CpuSolver {
   int threads_;Pool pool;std::vector<Scratch> work;
+  std::vector<Model> models;
  public:
   explicit CpuSolver(int threads):threads_(threads),pool(threads),work(threads){if(threads<1||threads>256)throw py::value_error("threads must be 1..256");}
-  py::tuple run(Array h,Array vp,Array vs,Array rho,Array periods,Array bounds,int modes,int wave,bool automatic,double tol,double accept){
+  py::tuple run(Array h,Array vp,Array vs,Array rho,Array periods,Array bounds,int modes,int wave,bool automatic,double tol,double accept,bool profile=false){
     if(h.ndim()!=2||h.shape(0)<1||h.shape(1)<1)throw py::value_error("model must be [B,L]");
     int B=h.shape(0),L=h.shape(1),nf=periods.size(),K=modes+2;
     for(auto *a:{&vp,&vs,&rho})if(a->ndim()!=2||a->shape(0)!=B||a->shape(1)!=L)throw py::value_error("model shapes differ");
     if(periods.ndim()!=1||nf<1||bounds.ndim()!=2||bounds.shape(0)!=B||bounds.shape(1)!=2||modes<1||L>256)throw py::value_error("invalid CPU geometry");
     py::array_t<double> output({B,modes,nf});py::array_t<unsigned> flags({B,nf});
     py::array_t<int> levels({B,nf}),counts({B,nf});
-    std::vector<Model> models(B);
+    if(models.size()<static_cast<size_t>(B))models.resize(B);
+    double prepare_s=0.,solve_s=0.;
     {
       py::gil_scoped_release release;
-      for(auto &w:work)w.stats.fill(0);
+      for(auto &w:work){w.stats.fill(0);w.profile=profile;w.sample_s=w.inverse_s=w.sort_s=w.refine_s=w.adaptive_s=w.dense_s=0.;w.cache_hits=w.cache_misses=0;
+        for(auto *v:{&w.roots,&w.previous,&w.coarse,&w.full,&w.guarded})v->reserve(K);
+        w.ka.resize(L);w.kb.resize(L);w.gammk.resize(L);}
+      auto stage_start=profile?Clock::now():Clock::time_point{};
       pool.run(B,[&](size_t i,int){
         auto &q=models[i];q.ia.resize(L);q.ib.resize(L);const size_t off=i*L;
+        q.tx.clear();q.tn.clear();q.tx.reserve(129+2*L);q.tn.reserve(129+2*L);
         for(int j=0;j<L;++j){q.ia[j]=1./(vp.data()[off+j]*vp.data()[off+j]);q.ib[j]=vs.data()[off+j]==0.?0.:1./(vs.data()[off+j]*vs.data()[off+j]);}
         q.view={h.data()+off,vp.data()+off,vs.data()+off,rho.data()+off,q.ia.data(),q.ib.data(),L,wave};
+        const int top=q.view.vs[0]==0.?1:0;
+        q.seed=wave?q.view.vs[top]:md::rayleigh_reference(q.view.vp[top],q.view.vs[top]);
+        q.water_seed=(!wave&&top)?md::scholte_reference(q.view.vp[0],q.view.rho[0],q.view.vp[1],q.view.vs[1],q.view.rho[1]):NAN;
         double lo=bounds.data()[2*i],hi=bounds.data()[2*i+1];
         for(int j=0;j<129;++j)q.tx.push_back(lo+(hi-lo)*j/128.);
         for(int j=0;j<L;++j)for(double c:{q.view.vp[j],q.view.vs[j]})if(c>lo&&c<hi)q.tx.push_back(c);
         std::sort(q.tx.begin(),q.tx.end());q.tx.erase(std::unique(q.tx.begin(),q.tx.end()),q.tx.end());
         for(double c:q.tx)q.tn.push_back(md::density_base(q.view,c));
       });
+      if(profile){prepare_s=seconds(stage_start);stage_start=Clock::now();}
       pool.run(static_cast<size_t>(B)*nf,[&](size_t t,int id){
         auto &w=work[id];const int i=t/nf,f=t%nf;auto &model=models[i];
         unsigned word=0;bool ready=false,previous_ok=false;int level=-1;
         w.cache.clear();w.previous.clear();
         double lo=bounds.data()[2*i],hi=bounds.data()[2*i+1],period=periods.data()[f];
+        const double omega=md::two_pi<double>()/period;
+        for(int j=0;j<L;++j){w.ka[j]=omega/model.view.vp[j];w.kb[j]=model.view.vs[j]==0.?0.:omega/model.view.vs[j];const double z=model.view.vs[j]/omega;w.gammk[j]=2.*z*z;}
+        w.medium=model.view;w.medium.ka=w.ka.data();w.medium.kb=w.kb.data();w.medium.gammk=w.gammk.data();
         if(hi>lo&&model.view.wave&&!md::sh_has_guide(model.view)){for(int m=0;m<modes;++m)output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=NAN;flags.mutable_data()[t]=0;levels.mutable_data()[t]=-3;counts.mutable_data()[t]=0;++w.stats[12];return;}
         if(hi<=lo){for(int m=0;m<modes;++m)output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=NAN;flags.mutable_data()[t]=0;levels.mutable_data()[t]=-4;counts.mutable_data()[t]=0;++w.stats[13];return;}
         bool shifted_companion=false;
         auto search=[&](bool guarded,int begin=0){
         previous_ok=false;w.previous.clear();
-        std::vector<double> coarse;bool coarse_ok=false;
+        auto &coarse=w.coarse;coarse.clear();bool coarse_ok=false;
         for(int lev=begin;lev<6;++lev){
           const double low=automatic&&lev<2?fmin((lev==0?4.:2.)*lo,(lo+hi)*.5):lo;
           double adaptive_hi=hi;
@@ -206,7 +237,9 @@ class CpuSolver {
           // much wider than refinement error, and never narrow after a failed
           // sample/capacity check. Dense fallbacks keep the original window.
           if(guarded&&lev>0&&lev<4&&previous_ok&&static_cast<int>(w.previous.size())==K&&!(word&(8|32|64|512)))adaptive_hi=std::fmin(hi,w.previous.back()*(1.+4.*tol));
+          const auto t=profile?Clock::now():Clock::time_point{};
           bool ok=lev<4?search_adaptive(model,period,low,adaptive_hi,.5/(1<<lev),K,tol,w,word,guarded&&shifted_companion):search_dense(model,period,lo,hi,lev==4?1:2,K,tol,w,word);
+          if(profile){if(lev<4)w.adaptive_s+=seconds(t);else w.dense_s+=seconds(t);}
           bool same=ok&&previous_ok&&w.roots.size()==w.previous.size();
           for(size_t m=0;m<w.roots.size()&&same;++m){same=md::roots_agree(w.roots[m],w.previous[m],tol);if(m&&!(w.roots[m]>w.roots[m-1]))same=false;}
           if(lev==0&&ok){coarse=w.roots;coarse_ok=true;}
@@ -221,7 +254,7 @@ class CpuSolver {
         }return -1;};
         level=search(false);
         if(level==3&&!(word&(8|32|64|512))){
-          ++w.stats[14];auto full=w.roots;
+          ++w.stats[14];auto &full=w.full;full=w.roots;
           shifted_companion=static_cast<int>(full.size())<K;
           int check_level=search(true);bool same=check_level>=0&&full.size()==w.roots.size();
           for(size_t m=0;m<full.size()&&same;++m)same=md::roots_agree(full[m],w.roots[m],tol);
@@ -229,7 +262,7 @@ class CpuSolver {
           else{
             if(!(word&1024))++w.stats[15];word|=1024;
             if(check_level<0)level=-1;
-            else{auto guarded=w.roots;level=search(false,4);
+            else{auto &guarded=w.guarded;guarded=w.roots;level=search(false,4);
               if(level>=0&&(!md::contains_witnesses(w.roots.data(),w.roots.size(),full.data(),full.size(),K,tol)||!md::contains_witnesses(w.roots.data(),w.roots.size(),guarded.data(),guarded.size(),K,tol)))level=-1;
             }
           }
@@ -241,21 +274,27 @@ class CpuSolver {
         for(int m=0;m<modes;++m){
           double root=ready&&m<static_cast<int>(w.roots.size())?w.roots[m]:NAN;
           if(std::isfinite(root)&&root>=.99*model.view.vs[L-1])cutoff=true;
-          if(std::isfinite(root)&&accept<1.){double value=evaluate(model.view,md::two_pi<double>()/period,root,w);if(!std::isfinite(value)||std::fabs(value)>accept){root=NAN;word|=128;++w.stats[11];}}
+          if(std::isfinite(root)&&accept<1.){double value=evaluate(w.medium,omega,root,w);if(!std::isfinite(value)||std::fabs(value)>accept){root=NAN;word|=128;++w.stats[11];}}
           output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=root;
         }
         if(cutoff)word|=16;if(word&16)++w.stats[7];flags.mutable_data()[t]=word;levels.mutable_data()[t]=level;counts.mutable_data()[t]=ready?w.roots.size():-1;
       });
+      if(profile)solve_s=seconds(stage_start);
     }
     py::dict stats;for(int j=0;j<16;++j){unsigned long long v=0;for(auto&w:work)v+=w.stats[j];stats[counter_names[j]]=v;}
     stats["threads"]=threads_;stats["strategy"]="qe_adaptive";
+    if(profile){py::dict timing;timing["model_prepare"]=prepare_s;timing["search_wall"]=solve_s;
+      double sample=0.,inverse=0.,sort=0.,refine=0.,adaptive=0.,dense=0.;unsigned long long hits=0,misses=0;
+      for(auto &w:work){sample+=w.sample_s;inverse+=w.inverse_s;sort+=w.sort_s;refine+=w.refine_s;adaptive+=w.adaptive_s;dense+=w.dense_s;hits+=w.cache_hits;misses+=w.cache_misses;}
+      timing["sample_evaluation_worker"]=sample;timing["density_inverse_worker"]=inverse;timing["sort_merge_worker"]=sort;timing["refinement_worker"]=refine;timing["adaptive_worker"]=adaptive;timing["dense_worker"]=dense;
+      stats["timings_s"]=timing;stats["cache_hits"]=hits;stats["cache_misses"]=misses;}
     return py::make_tuple(output,flags,stats,levels,counts);
   }
 };
 
 PYBIND11_MODULE(_cpu,m){
-  m.attr("ABI_VERSION")=1;m.attr("VERSION")="0.2.0";
-  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int>()).def("run",&CpuSolver::run);
+  m.attr("ABI_VERSION")=2;m.attr("VERSION")="0.2.1";
+  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int>()).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
   m.def("bounds",[](Array h,Array vp,Array vs,Array rho,int wave,py::object low,py::object high){
     int B=h.shape(0),L=h.shape(1);py::array_t<double> result({B,2});
     const bool auto_low=low.is_none(),auto_hi=high.is_none();double given_low=auto_low?0.:low.cast<double>(),given_hi=auto_hi?0.:high.cast<double>();

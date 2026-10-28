@@ -3,13 +3,14 @@ from __future__ import annotations
 from enum import IntEnum
 import os
 import threading
+import time
 import numpy as np
 from . import _cpu
 from ._loader import BackendUnavailableError, CudaUnavailable, load as _load_cuda
 from .models import LayeredModel, CANONICAL_MODELS, random_model_batch, pad_batch, to_batch
 
-__version__ = "0.2.0"
-if _cpu.VERSION!=__version__ or _cpu.ABI_VERSION!=1:raise RuntimeError("CPU package and extension versions differ; reinstall a matching wheel")
+__version__ = "0.2.1"
+if _cpu.VERSION!=__version__ or _cpu.ABI_VERSION!=2:raise RuntimeError("CPU package and extension versions differ; reinstall a matching wheel")
 TRACE_UNRESOLVED_BRACKET=1
 TRACE_RELOCATED=2
 TRACE_SEARCH_UNCONVERGED=4
@@ -85,7 +86,7 @@ class Solver:
     """
     def __init__(self,nc=512,cmin=None,cmax=None,c_tol_rel=1e-6,f_accept=1.,block=256,
                  search_strategy="qe_adaptive",workspace_bytes=256*1024**2,chunk_size=None,
-                 *,backend="auto",device=0,threads=None):
+                 *,backend="auto",device=0,threads=None,profile=False):
         if backend not in ("auto","cpu","cuda"):raise ValueError("backend must be auto, cpu or cuda")
         if search_strategy not in ("qe_adaptive","uniform"):raise ValueError("invalid search_strategy")
         for name,v in (("cmin",cmin),("cmax",cmax)):
@@ -100,9 +101,11 @@ class Solver:
         available=len(os.sched_getaffinity(0)) if hasattr(os,"sched_getaffinity") else os.cpu_count() or 1
         threads=min(8,available) if threads is None else threads
         if not isinstance(threads,(int,np.integer)) or not 1<=threads<=256:raise ValueError("threads must be 1..256")
+        if not isinstance(profile,(bool,np.bool_)):raise ValueError("profile must be boolean")
         self.nc=int(nc);self.cmin=cmin;self.cmax=cmax;self.c_tol_rel=float(c_tol_rel);self.f_accept=float(f_accept)
         self.block=int(block);self.search_strategy=search_strategy;self.workspace_bytes=int(workspace_bytes);self.chunk_size=chunk_size
         self.backend=backend;self.device=int(device);self.threads=int(threads)
+        self.profile=bool(profile)
         self._engine=None;self._engine_key=None;self._key=None;self._module=None;self._legacy=None;self._calls=0;self._last_stats=None
         self.last_result=None
         self._lock=threading.RLock()
@@ -126,6 +129,8 @@ class Solver:
         finally:self._lock.release()
 
     def _solve(self,thickness,vp,vs,rho,periods,nmodes=5,wave="rayleigh",names=None):
+        started=time.perf_counter() if self.profile else 0.
+        timings={}
         del names
         if wave not in ("rayleigh","love"):raise ValueError("wave must be rayleigh or love")
         if not isinstance(nmodes,(int,np.integer)) or not 1<=nmodes<=256:raise ValueError("nmodes must be 1..256")
@@ -133,7 +138,10 @@ class Solver:
         if np.iscomplexobj(periods):raise ValueError("periods must be real")
         per=np.ascontiguousarray(periods,dtype=np.float64)
         if per.ndim!=1 or not per.size or not np.isfinite(per).all() or np.any(per<=0):raise ValueError("periods must be a finite positive 1-D array")
+        if self.profile:timings['input_validation']=time.perf_counter()-started
+        selected=time.perf_counter() if self.profile else 0.
         backend,reason=self._select()
+        if self.profile:timings['backend_selection']=time.perf_counter()-selected
         if self.search_strategy=="uniform":
             if backend!="cuda" or wave!="rayleigh" or np.any(b==0) or L<2:raise NotImplementedError("uniform is the legacy CUDA solid-Rayleigh option; use qe_adaptive for this combination")
             if self._legacy is None:
@@ -145,41 +153,67 @@ class Solver:
             result=DispersionBatch(old.phase_velocity,per,nmodes,wave,flags,np.full((B,per.size),-2,dtype=np.int32),np.sum(old.mode_mask,axis=1,dtype=np.int32),bounds,backend,reason)
             self._last_stats=self._legacy.stats();self._calls+=1;self.last_result=result
             return result
+        stage=time.perf_counter() if self.profile else 0.
         bounds=_cpu.bounds(h,a,b,r,int(wave=="love"),self.cmin,self.cmax)
+        if self.profile:timings['bounds']=time.perf_counter()-stage
         if not np.isfinite(bounds).all() or np.any(bounds[:,0]<=0):raise ValueError("automatic search range could not be constructed")
         if backend=="cpu":
-            fixed=self.threads*(3*2048*16+4*(nmodes+2)*8)+4096
+            fixed=self.threads*(4*2048*16+5*(nmodes+2)*8+3*L*8)+4096
             cost=8*(6*L+2*(129+2*L))+per.size*(8*nmodes+12)
-            capacity=min(B,(self.workspace_bytes-fixed)//cost,self.chunk_size or B)
+            limit=(self.workspace_bytes-fixed)//cost
         else:
             fixed=4096+8*per.size
             cost=8*(6*L+2*1024+4)+4+per.size*(64*(nmodes+2)+8*nmodes+48+2*256*8)
-            capacity=min(B,(self.workspace_bytes-4096-8*per.size)//cost,self.chunk_size or B)
+            limit=(self.workspace_bytes-fixed)//cost
+        capacity=min(B,limit,self.chunk_size or B)
         if capacity<1:raise MemoryError("workspace_bytes is too small for one model and the backend's fixed workspace; increase the budget or reduce threads")
         key=(backend,self.device,self.threads,capacity,L,per.size,int(nmodes))
-        if key!=self._engine_key:
+        # Preserve the high-water capacity for short tail batches. Never retain
+        # an allocation that exceeds a subsequently reduced budget/chunk cap.
+        compatible=(self._engine_key is not None and self._engine_key[:3]==key[:3]
+                    and self._engine_key[4:]==key[4:] and capacity<=self._engine_key[3]
+                    <=min(limit,self.chunk_size or limit))
+        allocated=not compatible
+        stage=time.perf_counter() if self.profile else 0.
+        if allocated:
             self.close()
             self._engine=_cpu.CpuSolver(self.threads) if backend=="cpu" else self._module.QeSolver(capacity,L,per.size,int(nmodes))
             self._engine_key=key
+        else:capacity=self._engine_key[3]
+        if self.profile:timings['engine_prepare']=time.perf_counter()-stage
+        stage=time.perf_counter() if self.profile else 0.
         velocity=np.empty((B,nmodes,per.size));flags=np.empty((B,per.size),dtype=np.uint32)
         levels=np.empty((B,per.size),dtype=np.int32);counts=np.empty_like(levels);stats={};chunks=0
+        if self.profile:timings['output_allocate']=time.perf_counter()-stage
         for start in range(0,B,capacity):
             end=min(B,start+capacity)
             args=(h[start:end],a[start:end],b[start:end],r[start:end],per,bounds[start:end])
-            if backend=="cpu":out=self._engine.run(*args,int(nmodes),int(wave=="love"),self.cmin is None,self.c_tol_rel,self.f_accept)
-            else:out=self._engine.run(*args,self.c_tol_rel,self.f_accept,int(wave=="love"),self.cmin is None)
+            if backend=="cpu":out=self._engine.run(*args,int(nmodes),int(wave=="love"),self.cmin is None,self.c_tol_rel,self.f_accept,self.profile)
+            else:out=self._engine.run(*args,self.c_tol_rel,self.f_accept,int(wave=="love"),self.cmin is None,self.profile)
+            stage=time.perf_counter() if self.profile else 0.
             velocity[start:end],flags[start:end],part,levels[start:end],counts[start:end]=out
+            if self.profile:timings['chunk_assembly']=timings.get('chunk_assembly',0.)+time.perf_counter()-stage
             for k,v in part.items():
-                if k in ("density_table_knots","cache_capacity"):stats[k]=int(v)
+                if k=='timings_s':
+                    for name,seconds in v.items():timings[name]=timings.get(name,0.)+float(seconds)
+                elif k=='active_traces_by_stage':
+                    stats[k]=[x+int(y) for x,y in zip(stats.get(k,[0]*len(v)),v)]
+                elif k in ("density_table_knots","cache_capacity","pinned_host_bytes","device_workspace_bytes"):stats[k]=int(v)
                 elif isinstance(v,(int,np.integer)) and k not in ("threads","capacity"):stats[k]=stats.get(k,0)+int(v)
             chunks+=1
         if self.cmin is not None or self.cmax is not None:flags|=TRACE_RANGE_TRUNCATED
         counts[(flags&TRACE_SEARCH_UNCONVERGED)!=0]=-1
         stats.update(backend=backend,strategy="qe_adaptive",chunks=chunks,threads=self.threads if backend=="cpu" else 0)
         stats.update(workspace_bytes=int(fixed+capacity*cost),workspace_budget_bytes=self.workspace_bytes)
+        stats.update(capacity_models=int(capacity),engine_allocations=int(allocated))
         for k in ("rejected_sign","troughs","hidden_roots","relocated"):stats.setdefault(k,0)
         self._last_stats=stats;self._key=(B,L,per.size,self.nc,nmodes);self._calls+=1
+        stage=time.perf_counter() if self.profile else 0.
         result=DispersionBatch(velocity,per,nmodes,wave,flags,levels,counts,bounds,backend,reason)
+        if self.profile:
+            timings['result_packaging']=time.perf_counter()-stage
+            timings['solver_total']=time.perf_counter()-started
+            stats['timings_s']=timings
         self.last_result=result
         return result
 
@@ -187,7 +221,10 @@ class Solver:
     def calls(self):return self._calls
     def stats(self):
         if self._last_stats is None:raise RuntimeError("call the solver first")
-        return dict(self._last_stats)
+        result=dict(self._last_stats)
+        if 'timings_s' in result:result['timings_s']=dict(result['timings_s'])
+        if 'active_traces_by_stage' in result:result['active_traces_by_stage']=list(result['active_traces_by_stage'])
+        return result
     def kernel_report(self):
         backend=self.last_result.backend_used if self.last_result is not None else self.backend
         if backend=="cuda" and self.search_strategy=="uniform":return {"backend":"cuda","precision":"float32 scan / float64 refinement","legacy":self._legacy.kernel_report()}

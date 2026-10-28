@@ -4,7 +4,7 @@ title: "modisp"
 authors:
   - name: "Yuan Yusong"
     type: entity
-version: "0.2.0"
+version: "0.2.1"
 date-released: 2026-10-28
 license: BSD-3-Clause
 abstract: "Normalized FP64 multimodal P-SV and SH phase dispersion with CPU and optional CUDA backends."

@@ -1,6 +1,6 @@
 # modisp CUDA 12 plugin
 
-This optional distribution adds the CUDA backend to `modisp==0.2.0`. It requires
+This optional distribution adds the CUDA backend to `modisp==0.2.1`. It requires
 an NVIDIA driver compatible with CUDA 12 and a supported GPU. Binary wheels
 include the static CUDA runtime; a CUDA toolkit is required only to compile the
 source distribution. The CPU base package requires neither a GPU nor CUDA.

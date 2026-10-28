@@ -109,4 +109,4 @@ high 有 117 条未解，因此仅 **30603 条**进入根判定；每档在未�
 
 完整 JSON 见 [tolerant-presets-20261028.json](benchmarks/tolerant-presets-20261028.json)，保留原始四份报告、聚合数据、运行环境和哈希。复现入口为 `tools/benchmark_tolerant_presets.py`、`tools/validate_tolerant_stress.py`，判据实现为 `tools/tolerant_metrics.py`。服务器只上传了获授权源码，独立参考和性能输入使用服务器原有副本。
 
-源码、配套 wheel、sdist、报告、数值输出、检查日志和 SHA256 清单见 [GitHub v0.3.0 发布附件](https://github.com/YuanYusung/modisp/releases/tag/v0.3.0)。本地与服务器原始验证记录及先前严格修复实验继续保留。
+源码、配套 wheel、sdist 和 SHA256 清单见 [GitHub v0.3.0 发布附件](https://github.com/YuanYusung/modisp/releases/tag/v0.3.0)。验证报告与统计收据随源码提供；本地与服务器原始数值输出、检查日志及先前严格修复实验继续留存。

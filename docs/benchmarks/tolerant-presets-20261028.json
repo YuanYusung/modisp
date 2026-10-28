@@ -281,7 +281,7 @@
   },
   "evidence": {
     "cpu": {
-      "path": "numerical-evidence.tar.gz:final-cpu-128/report.json",
+      "path": "retained validation archive: numerical-evidence.tar.gz:final-cpu-128/report.json",
       "sha256": "cec8caf2c337060cf2c7d26bcdea13f2ba9e98c878ff56852529862dd59cfab1",
       "report": {
         "version": "0.3.0",
@@ -1432,7 +1432,7 @@
       }
     },
     "cuda": {
-      "path": "numerical-evidence.tar.gz:delivered-cuda-1024/report.json",
+      "path": "retained validation archive: numerical-evidence.tar.gz:delivered-cuda-1024/report.json",
       "sha256": "a83d5bf486e563d312d4968ce3508f3b808804a0de5400fd2c05f7c50ba3a20e",
       "report": {
         "version": "0.3.0",
@@ -2597,7 +2597,7 @@
       }
     },
     "stress_cpu": {
-      "path": "stress-cpu.json",
+      "path": "retained validation archive: stress-cpu.json",
       "sha256": "99565722bd0ebcd3bbc2a7d2acc38302882a1b1fbecc5ccb11a1a4c6420a7358",
       "report": {
         "reference_kind": "same-physics high regression, not independent physical truth",
@@ -3025,7 +3025,7 @@
       }
     },
     "stress_cuda": {
-      "path": "stress-cuda.json",
+      "path": "retained validation archive: stress-cuda.json",
       "sha256": "0ce29a79379d5712998427ffa0e6daf1a165cb6db8797db43adaf55117cabfca",
       "report": {
         "reference_kind": "same-physics high regression, not independent physical truth",

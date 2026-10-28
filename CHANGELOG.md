@@ -20,9 +20,12 @@
   with zero wrong/missing/extra/newly-unresolved results, maximum common error
   2.15e-7 km/s. The complete Base workload (29,379 models) improved 2.44x in
   solver time and 2.38x end to end; the Aug 10,000 stress set improved 2.48x.
-  Both retained zero wrong/missing/extra/newly-unresolved cells. The 11
-  independent FP64 suites remain 0 wrong/missing/extra/unresolved for high,
-  balanced and fast; `high` remains byte-identical to 0.2.1.
+  Both retained zero wrong/missing/extra/newly-unresolved cells. `fast`
+  measured 2.45x on 1,024 models CUDA, 2.53x solver/2.47x end-to-end on complete
+  Base and 2.55x on Aug 10,000, also with zero wrong/missing/extra/newly
+  unresolved cells. The 11 independent FP64 suites remain
+  0 wrong/missing/extra/unresolved for high, balanced and fast; `high` remains
+  byte-identical to 0.2.1.
 
 ## 0.2.1 — 2026-10-28
 

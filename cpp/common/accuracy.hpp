@@ -66,10 +66,10 @@ inline AccuracyPolicy make_accuracy_policy(int accuracy, double period_threshold
       p.accept_level2 = 2;
       p.period_threshold = period_threshold > 0.0 ? period_threshold : 0.63;
       p.gap_factor = 1.5;
-      p.dense_gap_factor = 3.0;
+      p.dense_gap_factor = 4.0;
       p.trough_threshold = 0.05;
       p.dense_floor4 = 4096;
-      p.dense_floor5 = 16384;
+      p.dense_floor5 = 32768;
       p.dense_factor4 = 1;
       p.dense_factor5 = 1;
       p.verify_safe_skip = true;

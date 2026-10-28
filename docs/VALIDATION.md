@@ -43,6 +43,13 @@ their tests validates honest failure signaling; it does not mean those physical
 roots were recovered under the high schedule. Other tests explicitly reject an
 all-UNRESOLVED regression.
 
+`fast` measured 2.45x on the 1,024-model CUDA task, 2.53x solver/2.47x
+end-to-end on complete Base, and 2.55x on Aug 10,000. It retained zero
+wrong/missing/extra/newly-unresolved cells on all three, with maximum common
+errors 2.2580e-7, 2.8042e-7 and 2.9777e-7 km/s. The earlier 16,384-point fine
+dense floor produced six shifted close-root Aug cells (maximum 0.088 km/s); the
+shipped fast preset uses 32,768 points and the four-cell dense safety margin.
+
 The A/B runs used interleaved order, a separate warmup and five steady samples.
 CUDA steadies were 7.4857 s (0.2.1) and 3.1352 s (balanced), a 2.39x gain. CPU
 64-thread steadies were 31.6240 s and 11.5768 s, a 2.73x gain. Complete Base

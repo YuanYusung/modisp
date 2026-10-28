@@ -84,7 +84,7 @@ is spent before a root set is accepted.
 |---|---|---|---|---|
 | `high` | none (all four levels) | every level-3 trace | 32,768 / 65,536 | exact 0.2.1 behavior; bitwise baseline |
 | `balanced` | level 1 for T ≥ 1.0 s, level 2 otherwise, only with a spacing/trough safety check | only unsafe or close-root traces | 8,192 / 32,768 | default production trade-off |
-| `fast` | level 1 for T ≥ 0.63 s, level 2 otherwise, same safety check | only unsafe or close-root traces | 4,096 / 16,384 | explicit opt-in speed mode |
+| `fast` | level 1 for T ≥ 0.63 s, level 2 otherwise, same safety check | only unsafe or close-root traces | 4,096 / 32,768 | explicit opt-in speed mode |
 
 `high` reproduces the 0.2.1 outputs bit for bit. `balanced` and `fast` are
 opt-in accuracy/performance trade-offs; `balanced` retains the independent

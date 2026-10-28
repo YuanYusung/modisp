@@ -15,6 +15,7 @@
 #include <utility>
 #include <stdexcept>
 #include <string>
+#include "common/accuracy.hpp"
 #include "common/physics.hpp"
 #ifndef MD_DENSITY_TABLE
 #define MD_DENSITY_TABLE 1
@@ -47,16 +48,23 @@ constexpr unsigned CUTOFF = 1u << 4, NONFINITE = 1u << 5;
 constexpr unsigned REFINE_FAILED = 1u << 6, F_REJECTED = 1u << 7;
 enum Stat { EVALS, EXTREMA, BRACKETS, ADAPT_OK, DENSE_OK, FAILED,
             CAPACITY_HITS, CUTOFFS, NONFINITES, REFINE_FAILURES, SEARCHES,
-            ACCEPT_REJECTED, ANALYTIC_EMPTY, RANGE_EMPTY, VERIFICATIONS, CONFLICTS, CACHE_HITS, CACHE_MISSES, NSTATS };
+            ACCEPT_REJECTED, ANALYTIC_EMPTY, RANGE_EMPTY, VERIFICATIONS, CONFLICTS, CACHE_HITS, CACHE_MISSES,
+            EARLY_ACCEPTS, VERIFICATION_SKIPPED, DENSE_COARSE_OK, DENSE_FINE_ESCALATED, TROUGH_RISKS, NSTATS };
 const char *stat_names[NSTATS] = {
     "evaluations", "extrema_proposals", "brackets", "adaptive_converged",
     "dense_converged", "unconverged", "capacity_hits", "near_cutoff",
-    "nonfinite", "refinement_failed", "searches", "rejected_f", "analytical_empty", "range_empty", "verification_traces", "family_conflicts", "cache_hits", "cache_misses"};
+    "nonfinite", "refinement_failed", "searches", "rejected_f", "analytical_empty", "range_empty", "verification_traces", "family_conflicts", "cache_hits", "cache_misses",
+    "early_accepts", "verification_skipped", "dense_coarse_accepted", "dense_fine_escalated", "trough_risks"};
 
 struct Device {
   double *d, *a, *b, *r, *period, *bounds, *ia, *ib, *tx, *tn, *seeds, *cache_x, *cache_y;
   int *nt, *cache_n, *queue, *next_queue, *queue_n, *next_n, *cursor;
   int wave, automatic, guarded, profile;
+  int accuracy, accept_level1, accept_level2, verify_safe_skip, allow_dense_early;
+  double close_root_rtol;
+  double period_threshold, gap_factor, dense_gap_factor, trough_threshold;
+  int dense_floor4, dense_floor5, dense_factor4, dense_factor5, dense_tile;
+  double *sample_gap; int *risk, *escalated;
   double *full_roots,*guard_roots;
   int *verify,*guard_count,*full_count;
   double *lo, *hi, *flo, *fhi, *roots, *previous, *output;
@@ -194,6 +202,7 @@ __global__ void initialize(Device st, int traces, int K,int L,int nf,int modes) 
   st.verify[t]=0;
   st.guard_count[t]=-1;
   st.full_count[t]=-1;
+  st.sample_gap[t]=0.;st.risk[t]=1;st.escalated[t]=0;
   if(!t){*st.queue_n=traces;*st.next_n=0;*st.cursor=0;}
   for (int m=0; m<K; ++m){st.previous[static_cast<size_t>(t)*K+m]=CUDART_NAN;st.roots[static_cast<size_t>(t)*K+m]=CUDART_NAN;}
   if(st.bounds[2*(t/nf)+1]>st.bounds[2*(t/nf)]&&st.wave&&!md::sh_has_guide(medium(st,t/nf,L))){st.active[t]=0;st.level[t]=-3;for(int m=0;m<modes;++m)st.output[(static_cast<size_t>(t/nf)*modes+m)*nf+t%nf]=CUDART_NAN;atomicAdd(&st.stats[ANALYTIC_EMPTY],1ULL);}
@@ -329,7 +338,7 @@ __device__ void adaptive_one(Device st,int L,int nf,int K,double delta,double to
 
 // Tiled dense fallback needs O(CAP) shared storage, independent of nc. Only
 // unresolved traces execute it. No scan matrices or candidates visit the CPU.
-__device__ void dense_one(Device st,int L,int nf,int K,int grid_factor,int t,double *sm) {
+__device__ void dense_one(Device st,int L,int nf,int K,int floor_cells,int factor,int t,double *sm) {
   double *x=sm, *y=x+CAP, *h=y+CAP, *a=h+L, *b=a+L, *r=b+L;
   double *ia=r+L, *ib=ia+L;
   double *ka=ib+L,*kb=ka+L,*gammk=kb+L;
@@ -356,12 +365,14 @@ __device__ void dense_one(Device st,int L,int nf,int K,int grid_factor,int t,dou
     }
     return;
   }
-  int cells=32768;
+  int cells=floor_cells;
   while (cells<need) cells*=2;
-  const int nc=grid_factor*cells+1;
+  const int nc=factor*cells+1;
+  if(!threadIdx.x){st.sample_gap[t]=cells>0?(upper-cmin)/static_cast<double>(cells):0.;st.risk[t]=0;}
+  __syncthreads();
   unsigned long long evals=0;
-  for (int start=0; start<nc-1; start+=CAP-1) {
-    const int n=min(CAP,nc-start);
+  for (int start=0; start<nc-1; start+=st.dense_tile-1) {
+    const int n=min(st.dense_tile,nc-start);
     for (int i=threadIdx.x; i<n; i+=blockDim.x) {
       x[i]=cmin+(upper-cmin)*static_cast<double>(start+i)/(nc-1.0);
       y[i]=md::evaluate(med,omega,x[i]); ++evals;
@@ -381,15 +392,126 @@ __device__ void dense_one(Device st,int L,int nf,int K,int grid_factor,int t,dou
   }
 }
 
+// Observation-scale logarithmic scan. The relative grid spacing is <= the
+// configured close-root tolerance (half of it in balanced). Missing even pairs
+// inside a cell are explicitly approximate, never certified mode labels.
+__device__ void observation_one(Device st,int L,int nf,int K,int modes,double tol,double accept,int t,double *sm){
+  double *x=sm,*y=x+CAP,*h=y+CAP,*a=h+L,*b=a+L,*r=b+L;
+  double *ia=r+L,*ib=ia+L,*ka=ib+L,*kb=ka+L,*gammk=kb+L;
+  __shared__ int nr,bad,n,end;
+  const size_t off=static_cast<size_t>(t/nf)*L;
+  const double period=st.period[t%nf],omega=md::two_pi<double>()/period;
+  for(int i=threadIdx.x;i<L;i+=blockDim.x){
+    h[i]=st.d[off+i];a[i]=st.a[off+i];b[i]=st.b[off+i];r[i]=st.r[off+i];
+    ia[i]=st.ia[off+i];ib[i]=st.ib[off+i];
+    if(MD_TRACE_CONSTANTS){ka[i]=omega/a[i];kb[i]=b[i]==0.?0.:omega/b[i];const double z=b[i]/omega;gammk[i]=2.*z*z;}
+  }
+  if(!threadIdx.x){nr=0;bad=0;st.flags[t]|=2048u;atomicAdd(&st.stats[SEARCHES],1ULL);}
+  __syncthreads();
+  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr};
+  const double lower=st.bounds[2*(t/nf)],upper=st.bounds[2*(t/nf)+1];
+  const double target=st.close_root_rtol*(st.accuracy==1?.5:1.);
+  const double origin=log(lower),span=log(upper)-origin,need=ceil(span/log1p(target));
+  if(!isfinite(need)||need>524288.){
+    if(!threadIdx.x){st.flags[t]|=WORKSPACE|UNCONVERGED;st.level[t]=-1;st.count[t]=-1;atomicAdd(&st.stats[CAPACITY_HITS],1ULL);}
+    for(int m=threadIdx.x;m<modes;m+=blockDim.x)st.output[(static_cast<size_t>(t/nf)*modes+m)*nf+t%nf]=CUDART_NAN;
+    return;
+  }
+  const int cells=max(1,static_cast<int>(need));const double step=span/cells;
+  unsigned long long evals=0;
+  for(int start=0;start<cells;){
+    // sort_pairs pads to a power of two and unique_pairs scans until infinity;
+    // clear the entire shared tail on every tile and reused persistent block.
+    for(int j=threadIdx.x;j<CAP;j+=blockDim.x){x[j]=CUDART_INF;y[j]=0.;}
+    __syncthreads();
+    const int last=min(cells,start+255),initial=last-start+1;
+    if(!threadIdx.x){n=initial;end=last;}
+    for(int j=threadIdx.x;j<initial;j+=blockDim.x){
+      const int index=start+j;const double c=index==0?lower:(index==cells?upper:exp(origin+step*index));
+      x[j]=c;y[j]=md::evaluate(med,omega,c);++evals;
+    }
+    __syncthreads();
+    if(!threadIdx.x&&last<cells&&y[initial-1]==0.){
+      ++end;const double c=end==cells?upper:exp(origin+step*end);
+      x[n]=c;y[n]=md::evaluate(med,omega,c);++n;++evals;
+    }
+    __syncthreads();
+    const int grid_n=n;const double left=x[0],right=x[grid_n-1];
+    // Freeze each lane's grid_n/right before any lane appends to shared n.
+    __syncthreads();
+    for(int j=threadIdx.x;j<6*L+2;j+=blockDim.x){
+      double c;
+      if(j<6*L){const int layer=j/6,which=j%6;if(st.wave&&b[0]==0.&&layer==0)continue;const double v=which<3?b[layer]:a[layer];c=v*(1.+((which%3)-1)*1e-7);}
+      else c=st.seeds[2*(t/nf)+j-6*L];
+      if(c>left&&c<right){const int dest=atomicAdd(&n,1);x[dest]=c;y[dest]=md::evaluate(med,omega,c);++evals;}
+    }
+    __syncthreads();
+    if(n!=grid_n){sort_pairs(x,y,n);if(!threadIdx.x)n=unique_pairs(x,y);}
+    __syncthreads();
+    if(!threadIdx.x){
+      for(int j=1;j+1<n;++j){const double f0=y[j-1],f1=y[j],f2=y[j+1];
+        if((f0<0.)==(f1<0.)&&(f1<0.)==(f2<0.)&&fabs(f1)<.05&&fabs(f1)<fabs(f0)&&fabs(f1)<fabs(f2)){st.flags[t]|=4096u;break;}}
+      if(end==cells&&md::ambiguous_sh_cutoff(med,x[n-1],y[n-1])){bad=4;st.flags[t]|=CUTOFF;}
+      if(!bad)collect(st,t,K,x,y,n,nr,bad,start==0,end==cells);
+    }
+    __syncthreads();
+    if(bad||nr>=K)break;
+    start=end;
+  }
+  add_sampling_stat(&st.stats[EVALS],evals);
+  const size_t roots=static_cast<size_t>(t)*K;
+  if(!bad){
+    for(int m=threadIdx.x;m<min(nr,K);m+=blockDim.x){
+      const size_t i=roots+m;int count=0;
+      const double root=md::refine_root(med,omega,st.lo[i],st.hi[i],st.flo[i],st.fhi[i],tol,count);
+      st.roots[i]=root;
+      if(!isfinite(root)){atomicExch(&bad,2);atomicOr(&st.flags[t],REFINE_FAILED);}
+      if(count)atomicAdd(&st.stats[EVALS],static_cast<unsigned long long>(count));
+    }
+  }
+  __syncthreads();
+  if(!threadIdx.x){
+    if(bad){st.flags[t]|=UNCONVERGED;if(bad&1)st.flags[t]|=NONFINITE;st.level[t]=-1;st.count[t]=-1;}
+    else{
+      st.level[t]=st.accuracy==1?6:7;st.count[t]=min(nr,K);
+      if(md::has_close_roots(st.roots+roots,min(nr,K),st.close_root_rtol))st.flags[t]|=4096u;
+      atomicAdd(&st.stats[VERIFICATION_SKIPPED],1ULL);
+    }
+    atomicAdd(&st.stats[BRACKETS],static_cast<unsigned long long>(nr));
+  }
+  __syncthreads();
+  for(int m=threadIdx.x;m<modes;m+=blockDim.x){
+    double root=!bad&&m<min(nr,K)?st.roots[roots+m]:CUDART_NAN;
+    if(isfinite(root)&&root>=.99*b[L-1])atomicOr(&st.flags[t],CUTOFF);
+    if(isfinite(root)&&accept<1.){
+      const double f=md::evaluate(med,omega,root);atomicAdd(&st.stats[EVALS],1ULL);
+      if(!isfinite(f)||fabs(f)>accept){root=CUDART_NAN;atomicOr(&st.flags[t],F_REJECTED);atomicAdd(&st.stats[ACCEPT_REJECTED],1ULL);}
+    }
+    st.output[(static_cast<size_t>(t/nf)*modes+m)*nf+t%nf]=root;
+  }
+  __syncthreads();
+}
+
+__global__ void observation_search(Device st,int L,int nf,int K,int modes,double tol,double accept){
+  extern __shared__ double sm[];__shared__ int index;
+  for(;;){
+    if(!threadIdx.x)index=atomicAdd(st.cursor,1);
+    __syncthreads();if(index>=*st.queue_n)return;
+    const int t=st.queue[index];
+    if(st.active[t])observation_one(st,L,nf,K,modes,tol,accept,t,sm);
+    __syncthreads();
+  }
+}
+
 // Persistent blocks consume only active traces, entirely on the device.
 template<bool ADAPTIVE>
 __global__ void search(Device st,int L,int nf,int K,double delta,double tol,int lev) {
   extern __shared__ double sm[];__shared__ int index;
-  if(!MD_ACTIVITY_QUEUE){const int t=blockIdx.x;if(!st.active[t])return;if(ADAPTIVE)adaptive_one(st,L,nf,K,delta,tol,lev,t,sm);else dense_one(st,L,nf,K,lev==4?1:2,t,sm);return;}
+  if(!MD_ACTIVITY_QUEUE){const int t=blockIdx.x;if(!st.active[t])return;if(ADAPTIVE)adaptive_one(st,L,nf,K,delta,tol,lev,t,sm);else dense_one(st,L,nf,K,lev==4?st.dense_floor4:st.dense_floor5,lev==4?st.dense_factor4:st.dense_factor5,t,sm);return;}
   for(;;){if(!threadIdx.x)index=atomicAdd(st.cursor,1);__syncthreads();if(index>=*st.queue_n)return;
     const int t=st.queue[index];
     if(st.active[t]){if(ADAPTIVE)adaptive_one(st,L,nf,K,delta,tol,lev,t,sm);
-    else dense_one(st,L,nf,K,lev==4?1:2,t,sm);}
+    else dense_one(st,L,nf,K,lev==4?st.dense_floor4:st.dense_floor5,lev==4?st.dense_factor4:st.dense_factor5,t,sm);}
     __syncthreads();
   }
 }
@@ -443,6 +565,8 @@ __global__ void compare(Device st, int traces, int L, int nf, int K, int modes,
   if(same&&level==5&&st.verify[t]==2){
     same=md::contains_witnesses(st.roots+p,count,st.full_roots+p,st.full_count[t],K,tol)&&md::contains_witnesses(st.roots+p,count,st.guard_roots+p,st.guard_count[t],K,tol);
   }
+  // All presets retain the high density ladder. Nested sparse/coarse grids
+  // can agree while missing a pair; observed-root spacing cannot bypass it.
   if (same && !force) {
     st.active[t]=0; st.level[t]=level;
     bool near=false;
@@ -465,6 +589,7 @@ __global__ void compare(Device st, int traces, int L, int nf, int K, int modes,
     st.prev_count[t]=st.status[t] ? -1 : count;
     if(!st.status[t])for (int m=0; m<count; ++m) st.previous[p+m]=st.roots[p+m];
     if(!finish)st.next_queue[atomicAdd(st.next_n,1)]=t;
+    if(level==4&&!finish)st.escalated[t]=1;
     if (finish) {
       st.active[t]=0; st.flags[t]|=UNCONVERGED;
       for (int m=0; m<modes; ++m)
@@ -504,8 +629,8 @@ __global__ void reconcile(Device st,int traces,int K,double tol){
 __global__ void final_statistics(Device st,int traces){
   const int t=blockIdx.x*blockDim.x+threadIdx.x;if(t>=traces)return;
   if(st.flags[t]&UNCONVERGED)atomicAdd(&st.stats[FAILED],1ULL);
-  else if(st.level[t]==3)atomicAdd(&st.stats[ADAPT_OK],1ULL);
-  else if(st.level[t]==5)atomicAdd(&st.stats[DENSE_OK],1ULL);
+  else if(st.level[t]>=1&&st.level[t]<=3)atomicAdd(&st.stats[ADAPT_OK],1ULL);
+  else if(st.level[t]>=4)atomicAdd(&st.stats[DENSE_OK],1ULL);
   if(st.flags[t]&CUTOFF)atomicAdd(&st.stats[CUTOFFS],1ULL);
 }
 
@@ -554,9 +679,10 @@ class Solver {
     zero(st_.stats,NSTATS*sizeof(unsigned long long));
     measured("initialize",profile,[&]{initialize<<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_,L_,nf_,modes_);});
     const size_t sm=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*L_)*sizeof(double);
+    if(profile)zero(activity_,14*sizeof(int));
     const double delta[4]={0.5,0.25,0.125,0.0625};int stage=0;
-    auto stages=[&](int begin){for(int lev=begin;lev<6;++lev){
-      if(profile)check(cudaMemcpyAsync(activity_+stage++,st_.queue_n,sizeof(int),cudaMemcpyDeviceToDevice,stream_));
+    auto stages=[&](int begin,bool finish_last,bool record){for(int lev=begin;lev<6;++lev){
+      if(profile&&record)check(cudaMemcpyAsync(activity_+stage++,st_.queue_n,sizeof(int),cudaMemcpyDeviceToDevice,stream_));
       zero(st_.cursor,sizeof(int));zero(st_.next_n,sizeof(int));
       const int blocks=MD_ACTIVITY_QUEUE?std::min(traces,blocks_):traces;
       measured(lev<4?"search_adaptive":"search_dense",profile,[&]{
@@ -564,21 +690,33 @@ class Solver {
         else search<false><<<blocks,block_,sm,stream_>>>(st_,L_,nf_,K_,0.,tol,lev);
       });
       measured("refinement",profile,[&]{refine<<<(traces*K_+255)/256,256,0,stream_>>>(st_,traces,L_,nf_,K_,tol);});
-      measured("compare",profile,[&]{compare<<<(traces+255)/256,256,0,stream_>>>(st_,traces,L_,nf_,K_,modes_,tol,accept,lev,lev<3||lev==4,lev==5);});
+      measured("compare",profile,[&]{compare<<<(traces+255)/256,256,0,stream_>>>(st_,traces,L_,nf_,K_,modes_,tol,accept,lev,lev<3||lev==4,lev==5&&finish_last);});
       check(cudaGetLastError());std::swap(st_.queue,st_.next_queue);std::swap(st_.queue_n,st_.next_n);
     }};
-    stages(0);zero(st_.queue_n,sizeof(int));
+    if(st_.accuracy!=0){
+      if(profile)check(cudaMemcpyAsync(activity_,st_.queue_n,sizeof(int),cudaMemcpyDeviceToDevice,stream_));
+      measured("observation_search",profile,[&]{observation_search<<<std::min(traces,blocks_),block_,sm,stream_>>>(st_,L_,nf_,K_,modes_,tol,accept);});
+    }else{
+    stages(0,true,true);zero(st_.queue_n,sizeof(int));
     measured("verification_prepare",profile,[&]{prepare_verification<<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_);});
-    st_.guarded=1;stages(0);zero(st_.queue_n,sizeof(int));
+    st_.guarded=1;stages(0,true,true);zero(st_.queue_n,sizeof(int));
     measured("reconcile",profile,[&]{reconcile<<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_,tol);});
-    st_.guarded=0;stages(4);
+    st_.guarded=0;stages(4,true,true);
+    }
     measured("final_statistics",profile,[&]{final_statistics<<<(traces+255)/256,256,0,stream_>>>(st_,traces);});
     measured("d2h",profile,[&]{down(hv_,st_.output,static_cast<size_t>(B)*modes_*nf_);down(hf_,st_.flags,traces);down(hl_,st_.level,traces);down(hc_,st_.count,traces);down(hs_,st_.stats,NSTATS);if(profile)down(hactivity_,activity_,14);});
     check(cudaGetLastError());
   }
  public:
-  Solver(int B,int L,int nf,int modes):B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2){
+  Solver(int B,int L,int nf,int modes,int accuracy,double period_threshold,double close_root_rtol):B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2){
     if(B<1||L<1||nf<1||modes<1||L>256||modes>256)throw py::value_error("QE geometry requires B,nf,modes>=1, 1<=L<=256, modes<=256");
+    const md::AccuracyPolicy policy=md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol);
+    st_.close_root_rtol=policy.close_root_rtol;
+    st_.accuracy=static_cast<int>(policy.accuracy);st_.accept_level1=policy.accept_level1;st_.accept_level2=policy.accept_level2;
+    st_.period_threshold=policy.period_threshold;st_.gap_factor=policy.gap_factor;st_.dense_gap_factor=policy.dense_gap_factor;st_.trough_threshold=policy.trough_threshold;
+    st_.dense_floor4=policy.dense_floor4;st_.dense_floor5=policy.dense_floor5;st_.dense_factor4=policy.dense_factor4;st_.dense_factor5=policy.dense_factor5;
+    st_.dense_tile=policy.cuda_dense_tile;
+    st_.verify_safe_skip=policy.verify_safe_skip?1:0;st_.allow_dense_early=policy.allow_dense_early?1:0;
     const size_t models=static_cast<size_t>(B)*L,tr=static_cast<size_t>(B)*nf,roots=tr*K_;
     check(cudaGetDevice(&device_));
     try{
@@ -588,7 +726,7 @@ class Solver {
       const int shared=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*L_)*sizeof(double);
       // Use one maximum for all supported geometries: another concurrent
       // solver must never lower this per-function attribute below our need.
-      if(shared>static_cast<int>(prop.sharedMemPerBlock)){const int maximum=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*256)*sizeof(double);check(cudaFuncSetAttribute(search<true>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));check(cudaFuncSetAttribute(search<false>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));}
+      if(shared>static_cast<int>(prop.sharedMemPerBlock)){const int maximum=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*256)*sizeof(double);check(cudaFuncSetAttribute(search<true>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));check(cudaFuncSetAttribute(search<false>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));check(cudaFuncSetAttribute(observation_search,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));}
       auto allocate=[&](auto *&ptr,size_t count){alloc(ptr,count);device_bytes_+=count*sizeof(*ptr);};
       allocate(st_.d,models);allocate(st_.a,models);allocate(st_.b,models);allocate(st_.r,models);
       allocate(st_.period,nf);allocate(st_.bounds,2*B);allocate(st_.ia,models);allocate(st_.ib,models);
@@ -599,6 +737,7 @@ class Solver {
       allocate(st_.roots,roots);allocate(st_.previous,roots);allocate(st_.output,tr*modes);
       allocate(st_.count,tr);allocate(st_.prev_count,tr);allocate(st_.status,tr);allocate(st_.active,tr);allocate(st_.level,tr);
       allocate(st_.flags,tr);allocate(st_.stats,NSTATS);allocate(st_.full_roots,roots);allocate(st_.guard_roots,roots);allocate(st_.verify,tr);allocate(st_.guard_count,tr);allocate(st_.full_count,tr);allocate(activity_,14);
+      allocate(st_.sample_gap,tr);allocate(st_.risk,tr);allocate(st_.escalated,tr);
       const size_t in_bytes=(4*models+nf+2*B)*sizeof(double);
       const size_t output_base=tr*modes*sizeof(double)+3*tr*sizeof(int);
       const size_t stats_offset=(output_base+7)&~size_t(7);
@@ -623,6 +762,7 @@ class Solver {
     QE_FREE(lo) QE_FREE(hi) QE_FREE(flo) QE_FREE(fhi) QE_FREE(roots) QE_FREE(previous) QE_FREE(output)
     QE_FREE(count) QE_FREE(prev_count) QE_FREE(status) QE_FREE(active) QE_FREE(level) QE_FREE(flags) QE_FREE(stats)
     QE_FREE(full_roots) QE_FREE(guard_roots) QE_FREE(verify) QE_FREE(guard_count) QE_FREE(full_count)
+    QE_FREE(sample_gap) QE_FREE(risk) QE_FREE(escalated)
 #undef QE_FREE
     if(activity_){cudaFree(activity_);activity_=nullptr;}
     if(host_input_){cudaFreeHost(host_input_);host_input_=nullptr;}if(host_output_){cudaFreeHost(host_output_);host_output_=nullptr;}
@@ -653,8 +793,12 @@ class Solver {
       if(profile)unpack_s=host_seconds(t);
     }
     py::dict stats;
-    for(int i=0;i<NSTATS;++i)if(i<CACHE_HITS||profile)stats[stat_names[i]]=hs_[i];
+    for(int i=0;i<NSTATS;++i)if(i<CACHE_HITS||profile||i>=EARLY_ACCEPTS)stats[stat_names[i]]=hs_[i];
     stats["strategy"]="qe_adaptive";stats["capacity"]=CAP;stats["density_table_knots"]=129;stats["cache_capacity"]=CACHE;
+    stats["dense_tile"]=st_.accuracy==0?st_.dense_tile:256;
+    stats["accuracy"]=md::accuracy_name(static_cast<md::Accuracy>(st_.accuracy));
+    stats["period_threshold"]=st_.period_threshold;stats["sampling_capacity"]=CAP;
+    stats["dense_floor4"]=st_.dense_floor4;stats["dense_floor5"]=st_.dense_floor5;
     stats["pinned_host_bytes"]=host_bytes_;stats["device_workspace_bytes"]=device_bytes_;
     if(profile){py::dict timing;for(size_t i=0;i<event_index_;++i){float ms=0.;check(cudaEventElapsedTime(&ms,events_[i].begin,events_[i].end));py::str key(events_[i].name);double prev=timing.contains(key)?timing[key].cast<double>():0.;timing[key]=prev+ms*.001;}
       timing["host_pack"]=pack_s;timing["host_unpack"]=unpack_s;stats["timings_s"]=timing;py::list activity;for(int j=0;j<14;++j)activity.append(hactivity_[j]);stats["active_traces_by_stage"]=activity;}
@@ -668,9 +812,9 @@ void bind_qe(py::module_ &m) {
   m.def("available",[](int device){int n=0;return cudaGetDeviceCount(&n)==cudaSuccess&&device>=0&&device<n;},py::arg("device")=0);
   m.def("set_device",[](int device){qe::check(cudaSetDevice(device));});
   m.def("memory_info",[](){size_t free,total;qe::check(cudaMemGetInfo(&free,&total));return py::make_tuple(free,total);});
-  m.def("qe_kernel_report",[](int L){cudaFuncAttributes a;qe::check(cudaFuncGetAttributes(&a,qe::search<true>));py::dict d;d["registers_per_thread"]=a.numRegs;d["static_shared_bytes"]=a.sharedSizeBytes;d["local_bytes_per_thread"]=a.localSizeBytes;int block=qe::env_integer("MODISP_CUDA_BLOCK",256,128,256),active=0;qe::check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&active,qe::search<true>,block,(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L)*sizeof(double)));d["search_block_threads"]=block;d["max_active_blocks_per_sm"]=active;d["configured_blocks_per_sm"]=qe::env_integer("MODISP_CUDA_BLOCKS_PER_SM",2,1,8);d["dynamic_shared_bytes"]=(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L)*sizeof(double);d["cache_points_per_trace"]=qe::CACHE;d["table_capacity_per_model"]=qe::TABLE;return d;});
+  m.def("qe_kernel_report",[](int L,int accuracy){const void *kernel=accuracy==0?reinterpret_cast<const void*>(qe::search<true>):reinterpret_cast<const void*>(qe::observation_search);cudaFuncAttributes a;qe::check(cudaFuncGetAttributes(&a,kernel));py::dict d;d["registers_per_thread"]=a.numRegs;d["static_shared_bytes"]=a.sharedSizeBytes;d["local_bytes_per_thread"]=a.localSizeBytes;int block=qe::env_integer("MODISP_CUDA_BLOCK",256,128,256),active=0;qe::check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&active,kernel,block,(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L)*sizeof(double)));d["search_block_threads"]=block;d["max_active_blocks_per_sm"]=active;d["configured_blocks_per_sm"]=qe::env_integer("MODISP_CUDA_BLOCKS_PER_SM",2,1,8);d["dynamic_shared_bytes"]=(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L)*sizeof(double);d["cache_points_per_trace"]=qe::CACHE;d["table_capacity_per_model"]=qe::TABLE;d["search_kernel"]=accuracy==0?"qe_adaptive":"observation_log";return d;},py::arg("L"),py::arg("accuracy")=0);
   py::class_<qe::Solver>(m,"QeSolver")
-    .def(py::init<int,int,int,int>(),py::arg("B"),py::arg("L"),py::arg("nf"),py::arg("nmodes"))
+    .def(py::init<int,int,int,int,int,double,double>(),py::arg("B"),py::arg("L"),py::arg("nf"),py::arg("nmodes"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005)
     .def("run",&qe::Solver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),
          py::arg("periods"),py::arg("bounds"),py::arg("c_tol_rel")=1e-6,py::arg("f_accept")=1.0,py::arg("wave")=0,py::arg("automatic")=false,py::arg("profile")=false)
     .def("close",&qe::Solver::close);

@@ -1,6 +1,23 @@
 # Performance measurement and ModePhys workflow
 
-## 0.3.0 accuracy presets
+## 0.3.0 observation-scale presets
+
+Balanced/fast now trade close-cluster resolution for throughput using a 0.5%
+configurable observation scale. See [current measured results](TOLERANT_PRESETS.md)
+for speed, ordinary-root accuracy, flagged cluster/ordinal differences and
+explicitly unjudged reference-prefix values. High retains its full schedule.
+
+The earlier strict-fix experiment is archived in
+[CORRECTNESS_PERFORMANCE_FIX.md](CORRECTNESS_PERFORMANCE_FIX.md); its 1.31x CPU
+and unchanged CUDA results do not describe the current observation grids.
+
+## Historical 0.3.0 measurements (superseded)
+
+The following timings used the original spacing-based acceptance heuristic.
+Two existing witness cases reveal silently missed root pairs outside those
+benchmarked inputs. These speed ratios do **not** apply to the corrected code.
+
+### Original 0.3.0 accuracy presets
 
 Version 0.3.0 adds `accuracy="high"|"balanced"|"fast"`. The default is
 `balanced`; `high` reproduces the 0.2.1 search schedule and outputs bit for bit.

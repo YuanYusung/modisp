@@ -1,7 +1,7 @@
 """Import installed extensions; CPU imports never require a CUDA runtime."""
 import importlib
 
-ABI_VERSION = 3
+ABI_VERSION = 4
 VERSION = "0.3.0"
 
 

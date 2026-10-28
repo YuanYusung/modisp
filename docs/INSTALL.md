@@ -20,12 +20,19 @@ and disba/Numba) are optional.
 
 Install the exact matching plugin after the CPU package:
 
+Release 0.3.0 uses private ABI 4. Replace both packages if an earlier local
+0.3.0 candidate with ABI 3 is installed; the same public version number alone
+does not make those candidate binaries compatible. Release assets are at
+[GitHub v0.3.0](https://github.com/YuanYusung/modisp/releases/tag/v0.3.0).
+
 ```sh
 python -m pip install /path/to/modisp_cuda12-0.3.0-<matching-tags>.whl
 modisp doctor
 ```
 
-The CUDA wheel targets Linux x86_64 and requires a compatible NVIDIA driver.
+The attached CUDA wheel targets Linux x86_64, CPython 3.10 and sm_80, and
+requires a compatible NVIDIA driver. The macOS CPU wheel targets macOS 27
+arm64 / CPython 3.12. Use a source build for other supported configurations.
 Its static CUDA runtime is linked into the extension; a toolkit is needed only
 for source builds. Use `backend="cuda"` to require CUDA or `backend="auto"` for
 automatic selection. `device=0` is the first device visible to the process.

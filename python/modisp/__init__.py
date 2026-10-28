@@ -10,7 +10,7 @@ from ._loader import BackendUnavailableError, CudaUnavailable, load as _load_cud
 from .models import LayeredModel, CANONICAL_MODELS, random_model_batch, pad_batch, to_batch
 
 __version__ = "0.3.0"
-if _cpu.VERSION!=__version__ or _cpu.ABI_VERSION!=3:raise RuntimeError("CPU package and extension versions differ; reinstall a matching wheel")
+if _cpu.VERSION!=__version__ or _cpu.ABI_VERSION!=4:raise RuntimeError("CPU package and extension versions differ; reinstall a matching wheel")
 TRACE_UNRESOLVED_BRACKET=1
 TRACE_RELOCATED=2
 TRACE_SEARCH_UNCONVERGED=4
@@ -22,6 +22,8 @@ TRACE_F_REJECTED=128
 TRACE_RANGE_TRUNCATED=256
 TRACE_SAMPLING_UNCERTAIN=512
 TRACE_ROOT_CONFLICT=1024
+TRACE_APPROXIMATE_SEARCH=2048
+TRACE_CLOSE_ROOT_RISK=4096
 
 
 class SolveStatus(IntEnum):
@@ -32,12 +34,23 @@ class SolveStatus(IntEnum):
 
 
 class DispersionBatch:
-    def __init__(self, velocity, periods, nmodes, wave, flags, levels, counts, bounds, backend, reason, accuracy=None):
+    def __init__(self, velocity, periods, nmodes, wave, flags, levels, counts, bounds, backend, reason, accuracy=None, close_root_rtol=.005):
         self.phase_velocity=velocity
         self.period=periods.copy()
         self.mode=np.arange(nmodes)
         self.wave=wave
         self.accuracy=accuracy
+        self.close_root_rtol=float(close_root_rtol)
+        self.approximate_search=(flags & TRACE_APPROXIMATE_SEARCH)!=0
+        self.mode_index_uncertain=self.approximate_search.copy()
+        self.close_root_mask=np.zeros(velocity.shape,dtype=bool)
+        if nmodes>1:
+            gaps=np.diff(velocity,axis=1)
+            close=np.isfinite(gaps)&(gaps<=self.close_root_rtol*velocity[:,1:,:])
+            self.close_root_mask[:,:-1,:]|=close
+            self.close_root_mask[:,1:,:]|=close
+        self.close_root_risk=((flags&TRACE_CLOSE_ROOT_RISK)!=0)|np.any(self.close_root_mask,axis=1)
+        self.potentially_ambiguous=self.approximate_search|self.close_root_risk
         self.mode_mask=np.isfinite(velocity)
         self.trace_flags=flags
         # User cropping is a range choice, not a numerical failure. Keep it
@@ -54,7 +67,7 @@ class DispersionBatch:
                                       SolveStatus.UNRESOLVED,SolveStatus.NOT_FOUND)).astype(np.uint8)
         rejected=np.isnan(velocity)&((flags[:,None,:]&TRACE_F_REJECTED)!=0)&(np.arange(nmodes)[None,:,None]<counts[:,None,:])
         self.status[rejected]=SolveStatus.REJECTED
-        self.mode_convention="ascending roots in the reported search interval"
+        self.mode_convention=("ascending recovered roots; close-cluster omissions may shift indices" if np.any(self.approximate_search) else "ascending roots in the reported search interval")
 
     @property
     def n_models(self): return self.phase_velocity.shape[0]
@@ -89,10 +102,10 @@ class Solver:
     controls the persistent CPU pool. Explicit cmin/cmax define a search window
     and consequently the ascending root labels within that window.
     """
-    def __init__(self,nc=512,cmin=None,cmax=None,c_tol_rel=1e-6,f_accept=1.,block=256,
+    def __init__(self,nc=512,cmin=None,cmax=None,c_tol_rel=None,f_accept=1.,block=256,
                  search_strategy="qe_adaptive",workspace_bytes=256*1024**2,chunk_size=None,
                  *,backend="auto",device=0,threads=None,profile=False,accuracy=None,
-                 adaptive_period_threshold=None):
+                 adaptive_period_threshold=None,close_root_rtol=.005):
         if backend not in ("auto","cpu","cuda"):raise ValueError("backend must be auto, cpu or cuda")
         if search_strategy not in ("qe_adaptive","uniform"):raise ValueError("invalid search_strategy")
         if accuracy is None:
@@ -105,6 +118,8 @@ class Solver:
         if adaptive_period_threshold is not None:
             if accuracy in ("high","uniform"):raise ValueError("adaptive_period_threshold applies only to balanced/fast")
             if not np.isfinite(adaptive_period_threshold) or adaptive_period_threshold<=0:raise ValueError("adaptive_period_threshold must be finite and positive")
+        if not np.isscalar(close_root_rtol) or np.iscomplexobj(close_root_rtol) or not np.isfinite(close_root_rtol) or not 0<close_root_rtol<1:raise ValueError("close_root_rtol must be finite and between 0 and 1")
+        if c_tol_rel is None:c_tol_rel={"high":1e-6,"balanced":1e-5,"fast":1e-4,"uniform":1e-6}[accuracy]
         for name,v in (("cmin",cmin),("cmax",cmax)):
             if v is not None and (not np.isfinite(v) or v<=0):raise ValueError(f"{name} must be finite and positive")
         if cmin is not None and cmax is not None and cmax<=cmin:raise ValueError("cmax must exceed cmin")
@@ -122,7 +137,7 @@ class Solver:
         self.block=int(block);self.search_strategy=search_strategy;self.workspace_bytes=int(workspace_bytes);self.chunk_size=chunk_size
         self.backend=backend;self.device=int(device);self.threads=int(threads)
         self.profile=bool(profile)
-        self.accuracy=accuracy;self.adaptive_period_threshold=adaptive_period_threshold
+        self.accuracy=accuracy;self.adaptive_period_threshold=adaptive_period_threshold;self.close_root_rtol=float(close_root_rtol)
         self._engine=None;self._engine_key=None;self._key=None;self._module=None;self._legacy=None;self._calls=0;self._last_stats=None
         self.last_result=None
         self._lock=threading.RLock()
@@ -167,27 +182,29 @@ class Solver:
             old=self._legacy(h,a,b,r,per,nmodes,wave)
             bounds=_cpu.bounds(h,a,b,r,0,.2 if self.cmin is None else self.cmin,self.cmax)
             flags=old.trace_flags.copy()|TRACE_RANGE_TRUNCATED
-            result=DispersionBatch(old.phase_velocity,per,nmodes,wave,flags,np.full((B,per.size),-2,dtype=np.int32),np.sum(old.mode_mask,axis=1,dtype=np.int32),bounds,backend,reason,accuracy="uniform")
-            self._last_stats=dict(self._legacy.stats(),accuracy="uniform");self._calls+=1;self.last_result=result
+            result=DispersionBatch(old.phase_velocity,per,nmodes,wave,flags,np.full((B,per.size),-2,dtype=np.int32),np.sum(old.mode_mask,axis=1,dtype=np.int32),bounds,backend,reason,accuracy="uniform",close_root_rtol=self.close_root_rtol)
+            self._last_stats=dict(self._legacy.stats(),accuracy="uniform",close_root_rtol=self.close_root_rtol);self._calls+=1;self.last_result=result
             return result
         stage=time.perf_counter() if self.profile else 0.
         bounds=_cpu.bounds(h,a,b,r,int(wave=="love"),self.cmin,self.cmax)
         if self.profile:timings['bounds']=time.perf_counter()-stage
         if not np.isfinite(bounds).all() or np.any(bounds[:,0]<=0):raise ValueError("automatic search range could not be constructed")
         if backend=="cpu":
-            fixed=self.threads*(4*2048*16+5*(nmodes+2)*8+3*L*8)+4096
+            fixed=self.threads*(4*2048*16+5*(nmodes+2)*8+3*L*8
+                                +0)+4096
             cost=8*(6*L+2*(129+2*L))+per.size*(8*nmodes+12+16)
             limit=(self.workspace_bytes-fixed)//cost
         else:
             fixed=4096+8*per.size
-            cost=8*(6*L+2*1024+4)+4+per.size*(64*(nmodes+2)+8*nmodes+48+2*256*8+16)
+            cache_points=256
+            cost=8*(6*L+2*1024+4)+4+per.size*(64*(nmodes+2)+8*nmodes+48+2*cache_points*8+16)
             limit=(self.workspace_bytes-fixed)//cost
         capacity=min(B,limit,self.chunk_size or B)
         if capacity<1:raise MemoryError("workspace_bytes is too small for one model and the backend's fixed workspace; increase the budget or reduce threads")
         threshold=0. if self.adaptive_period_threshold is None else float(self.adaptive_period_threshold)
         resolved_threshold=(float(self.adaptive_period_threshold) if self.adaptive_period_threshold is not None
                             else (1.0 if self.accuracy=="balanced" else (0.63 if self.accuracy=="fast" else 0.0)))
-        key=(backend,self.device,self.threads,capacity,L,per.size,int(nmodes),self.accuracy,threshold)
+        key=(backend,self.device,self.threads,capacity,L,per.size,int(nmodes),self.accuracy,threshold,self.close_root_rtol)
         # Preserve the high-water capacity for short tail batches. Never retain
         # an allocation that exceeds a subsequently reduced budget/chunk cap.
         compatible=(self._engine_key is not None and self._engine_key[:3]==key[:3]
@@ -198,8 +215,8 @@ class Solver:
         if allocated:
             self.close()
             code={"high":0,"balanced":1,"fast":2,"uniform":3}[self.accuracy]
-            self._engine=(_cpu.CpuSolver(self.threads,code,threshold) if backend=="cpu"
-                          else self._module.QeSolver(capacity,L,per.size,int(nmodes),code,threshold))
+            self._engine=(_cpu.CpuSolver(self.threads,code,threshold,self.close_root_rtol) if backend=="cpu"
+                          else self._module.QeSolver(capacity,L,per.size,int(nmodes),code,threshold,self.close_root_rtol))
             self._engine_key=key
         else:capacity=self._engine_key[3]
         if self.profile:timings['engine_prepare']=time.perf_counter()-stage
@@ -220,19 +237,20 @@ class Solver:
                     for name,seconds in v.items():timings[name]=timings.get(name,0.)+float(seconds)
                 elif k=='active_traces_by_stage':
                     stats[k]=[x+int(y) for x,y in zip(stats.get(k,[0]*len(v)),v)]
-                elif k in ("density_table_knots","cache_capacity","pinned_host_bytes","device_workspace_bytes","sampling_capacity","dense_floor4","dense_floor5"):stats[k]=int(v)
+                elif k in ("density_table_knots","cache_capacity","pinned_host_bytes","device_workspace_bytes","sampling_capacity","dense_floor4","dense_floor5","dense_tile"):stats[k]=int(v)
                 elif isinstance(v,(int,np.integer)) and k not in ("threads","capacity"):stats[k]=stats.get(k,0)+int(v)
             chunks+=1
         if self.cmin is not None or self.cmax is not None:flags|=TRACE_RANGE_TRUNCATED
         counts[(flags&TRACE_SEARCH_UNCONVERGED)!=0]=-1
-        stats.update(backend=backend,strategy="qe_adaptive",accuracy=self.accuracy,
-                     period_threshold=resolved_threshold,chunks=chunks,threads=self.threads if backend=="cpu" else 0)
+        stats.update(backend=backend,strategy=("qe_adaptive" if self.accuracy=="high" else "observation_log"),accuracy=self.accuracy,
+                     period_threshold=resolved_threshold,early_acceptance_enabled=False,approximate_search_enabled=self.accuracy in ("balanced","fast"),velocity_step_rtol=(self.close_root_rtol*(.5 if self.accuracy=="balanced" else 1.) if self.accuracy!="high" else None),close_root_rtol=self.close_root_rtol,refinement_tolerance=self.c_tol_rel,chunks=chunks,threads=self.threads if backend=="cpu" else 0)
+        stats.update(approximate_traces=int(np.count_nonzero(flags&TRACE_APPROXIMATE_SEARCH)),close_root_risk_traces=int(np.count_nonzero(flags&TRACE_CLOSE_ROOT_RISK)))
         stats.update(workspace_bytes=int(fixed+capacity*cost),workspace_budget_bytes=self.workspace_bytes)
         stats.update(capacity_models=int(capacity),engine_allocations=int(allocated))
         for k in ("rejected_sign","troughs","hidden_roots","relocated"):stats.setdefault(k,0)
         self._last_stats=stats;self._key=(B,L,per.size,self.nc,nmodes);self._calls+=1
         stage=time.perf_counter() if self.profile else 0.
-        result=DispersionBatch(velocity,per,nmodes,wave,flags,levels,counts,bounds,backend,reason,accuracy=self.accuracy)
+        result=DispersionBatch(velocity,per,nmodes,wave,flags,levels,counts,bounds,backend,reason,accuracy=self.accuracy,close_root_rtol=self.close_root_rtol)
         if self.profile:
             timings['result_packaging']=time.perf_counter()-stage
             timings['solver_total']=time.perf_counter()-started
@@ -253,8 +271,8 @@ class Solver:
         if backend=="cuda" and self.search_strategy=="uniform":return {"backend":"cuda","precision":"float32 scan / float64 refinement","accuracy":"uniform","legacy":self._legacy.kernel_report()}
         resolved=(float(self.adaptive_period_threshold) if self.adaptive_period_threshold is not None
                   else (1.0 if self.accuracy=="balanced" else (0.63 if self.accuracy=="fast" else 0.0)))
-        if backend=="cuda" and self._key is not None:return dict(self._module.qe_kernel_report(self._key[1]),backend=backend,precision="float64",accuracy=self.accuracy,period_threshold=resolved,sampling_capacity=2048)
-        return {"backend":backend,"precision":"float64","accuracy":self.accuracy,"period_threshold":resolved,"threads":self.threads,"module":_cpu.__file__}
+        if backend=="cuda" and self._key is not None:return dict(self._module.qe_kernel_report(self._key[1],int(self.accuracy!="high")),backend=backend,precision="float64",accuracy=self.accuracy,period_threshold=resolved,sampling_capacity=2048,cache_points_per_trace=256,close_root_rtol=self.close_root_rtol,refinement_tolerance=self.c_tol_rel)
+        return {"backend":backend,"precision":"float64","accuracy":self.accuracy,"period_threshold":resolved,"close_root_rtol":self.close_root_rtol,"refinement_tolerance":self.c_tol_rel,"search_kernel":"qe_adaptive" if self.accuracy=="high" else "observation_log","threads":self.threads,"module":_cpu.__file__}
     def close(self):
         with self._lock:
             if self._engine is not None and hasattr(self._engine,"close"):self._engine.close()

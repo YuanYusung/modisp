@@ -19,12 +19,11 @@ CPU installation and import require no CUDA. CUDA support is provided by the
 separate `modisp-cuda12` wheel with exactly the same version. NumPy is the only
 Python runtime dependency. See [installation and deployment](docs/INSTALL.md).
 
-See [performance measurement and the ModePhys workflow](docs/PERFORMANCE.md) for
-0.3.0 profiling, reproducible real-task tests and the accuracy/performance
-trade-off. On matched 1,024-model inputs, `accuracy="balanced"` (the new default)
-improves steady throughput by 2.39x on an A800 and 2.73x on 64 CPU threads
-against 0.2.1, with zero wrong/missing/extra/newly-unresolved cells and maximum
-common error 2.15e-7 km/s. `accuracy="high"` keeps the 0.2.1 outputs bit for bit.
+The current balanced/fast presets use a configurable observation-scale
+logarithmic grid (`close_root_rtol=0.005` by default). They allow flagged close
+clusters and uncertain recovered mode ranks to gain throughput; `high` retains
+the complete 0.2.1 schedule. See [current tolerance/performance results](docs/TOLERANT_PRESETS.md)
+for measured speed-ups and the full ordinary/close/unjudged error accounting.
 
 ## Unified dispersion interface
 
@@ -60,11 +59,10 @@ with Solver(backend="cpu", threads=4) as solver:
     print(solver.stats(), solver.last_result is result)
 ```
 
-`accuracy="balanced"` is the default. The search still evaluates the same FP64
-secular function and refines every accepted bracket in FP64; the preset only
-reduces adaptive sampling/verification and the dense fallback. Select
-`accuracy="high"` for bit-identical 0.2.1 behavior, or `accuracy="fast"` for an
-explicit larger speed/accuracy trade-off:
+`accuracy="balanced"` is the default: its relative velocity grid step is at
+most 0.25%; `fast` uses at most 0.5%. Both use FP64 evaluation and refinement,
+flag all approximate searches and expose `mode_index_uncertain` and
+`close_root_mask`. Select `high` for strict individual-root ordering:
 
 ```python
 with Solver(backend="cuda", accuracy="high") as exact:
@@ -167,11 +165,11 @@ Measured on 2026-10-28 with disba 0.7.0 and QEDispInv `ed1b5dd`, using the same
 solid-Rayleigh inputs on dual-socket Xeon Gold 6430 CPUs and one NVIDIA A800.
 Accuracy uses all 171 models / 6083 period traces with four requested modes.
 The independent judge is a stable two-grid FP64 reference (32769/65537 nodes).
-For 0.3.0, `high` retains the 2.586418e-07 maximum; `balanced` and `fast`
-measure 2.624469477296998e-07, each with zero wrong/missing/extra/unresolved
-cells. On the complete Base workload, `balanced` is 2.44x faster in solver time
-(2.38x end to end) with zero missing/extra/unresolved cells and maximum common
-error 2.8042e-7 km/s.
+The current presets are checked against all 11 reference suites,
+plus the separate extreme witness fixtures. Ordinary errors, close-cluster omissions, ordinal shifts and unjudged values
+are reported separately in [current validation](docs/TOLERANT_PRESETS.md).
+The original 0.3.0 speed claims below/elsewhere are historical and do not apply
+to the corrected execution path.
 
 | Solver | Wrong | Missing | Extra | Exceptions / unresolved | Max common abs error (km/s) |
 |---|---:|---:|---:|---:|---:|

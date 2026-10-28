@@ -5,7 +5,10 @@ __pycache__/
 .pytest_cache/
 .numba-cache/
 *.egg-info/
-cuda-plugin/cpp/
+cuda-plugin/cpp/*
+!cuda-plugin/cpp/common/
+cuda-plugin/cpp/common/*
+!cuda-plugin/cpp/common/accuracy.hpp
 research/
 wheelhouse/
 release/

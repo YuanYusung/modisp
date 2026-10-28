@@ -6,18 +6,19 @@ import modisp as md
 BACKEND=os.environ.get("MODISP_TEST_BACKEND","cpu")
 
 
-def test_batch_halfspace_rayleigh_and_period_order():
+@pytest.mark.parametrize("accuracy,rtol",[("high",0.),("balanced",2e-5),("fast",2e-4)])
+def test_batch_halfspace_rayleigh_and_period_order(accuracy,rtol):
     vp,vs=6.,3.5
     k=(vs/vp)**2
     root=brentq(lambda x:x**3-8*x*x+(24-16*k)*x-16*(1-k),0.,1.)
     periods=np.array([10.,.1,1.,.1])
-    out=md.dispersion(np.array([[0.,vp,vs,2.7]]),periods,nmodes=1,backend=BACKEND)
+    out=md.dispersion(np.array([[0.,vp,vs,2.7]]),periods,nmodes=1,backend=BACKEND,accuracy=accuracy)
     assert isinstance(out,md.DispersionBatch)
     assert out.phase_velocity.shape==(1,1,4)
     np.testing.assert_array_equal(out.period,periods)
     np.testing.assert_array_equal(out.mode,[0])
     assert out.wave=="rayleigh"
-    np.testing.assert_allclose(out.phase_velocity[0,0],vs*np.sqrt(root),atol=1e-6,rtol=0)
+    np.testing.assert_allclose(out.phase_velocity[0,0],vs*np.sqrt(root),atol=1e-6,rtol=rtol)
 
 
 def test_halfspace_has_no_love_guided_modes():
@@ -31,7 +32,8 @@ def test_halfspace_has_no_love_guided_modes():
     assert not np.any(out.trace_flags&md.TRACE_SEARCH_UNCONVERGED)
 
 
-def test_love_two_layer_analytic():
+@pytest.mark.parametrize("accuracy,rtol",[("high",0.),("balanced",2e-5),("fast",2e-4)])
+def test_love_two_layer_analytic(accuracy,rtol):
     h,b1,b2,r1,r2=1.,1.5,3.5,2.,2.7
     t=2.;omega=2*np.pi/t
     def secular(c):
@@ -41,10 +43,10 @@ def test_love_two_layer_analytic():
     cs=np.linspace(np.nextafter(b1,b2),np.nextafter(b2,b1),10000)
     ff=secular(cs);ii=np.flatnonzero(np.signbit(ff[:-1])!=np.signbit(ff[1:]))
     expected=[brentq(secular,cs[i],cs[i+1],xtol=1e-13) for i in ii]
-    with md.Solver(backend=BACKEND) as s:
+    with md.Solver(backend=BACKEND,accuracy=accuracy) as s:
         out=s([h,0.],[3.,6.],[b1,b2],[r1,r2],[t],nmodes=3,wave="love")
     actual=out.phase_velocity[0,:,0]
-    np.testing.assert_allclose(actual[:len(expected)],expected,atol=1e-6,rtol=0)
+    np.testing.assert_allclose(actual[:len(expected)],expected,atol=1e-6,rtol=rtol)
     assert np.isnan(actual[len(expected):]).all()
 
 
@@ -98,14 +100,15 @@ def test_invalid_internal_fluid_and_backend():
 
 
 @pytest.mark.parametrize("wave",["rayleigh","love"])
-def test_cpu_matches_disba_easy_models(wave):
+@pytest.mark.parametrize("accuracy,rtol",[("high",0.),("balanced",2e-5),("fast",2e-4)])
+def test_cpu_matches_disba_easy_models(wave,accuracy,rtol):
     disba=pytest.importorskip("disba")
     model=np.array([[1.,3.,1.5,2.],[0.,6.,3.5,2.7]])
     per=np.logspace(-1,1,16)
     ref=disba.PhaseDispersion(*model.T)(per,mode=0,wave=wave)
-    actual=md.dispersion(model,per,nmodes=1,wave=wave,backend=BACKEND)
+    actual=md.dispersion(model,per,nmodes=1,wave=wave,backend=BACKEND,accuracy=accuracy)
     np.testing.assert_allclose(actual.period,ref.period)
-    np.testing.assert_allclose(actual.phase_velocity[0,0],ref.velocity,atol=4e-6,rtol=0)
+    np.testing.assert_allclose(actual.phase_velocity[0,0],ref.velocity,atol=4e-6,rtol=rtol)
 
 @pytest.mark.parametrize('vs',[.18,1.5,3.5])
 def test_no_sh_guide_is_not_a_cutoff_root(vs):

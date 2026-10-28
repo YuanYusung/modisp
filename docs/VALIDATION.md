@@ -1,6 +1,19 @@
 # Validation
 
-## 0.3.0 — 2026-10-28
+## 0.3.0 observation-scale presets
+
+High retains the 0.2.1 bitwise fixtures. Balanced/fast are judged by ordinary
+roots and flagged close clusters at `close_root_rtol=0.005`, with ordinal shifts
+and unjudged values retained explicitly. See [current report](TOLERANT_PRESETS.md).
+The tests also check an independent 2x2 SH recurrence on an isolated-root case
+that the earlier spacing heuristic missed, plus chunk/profile determinism and
+quality-marker persistence. Historical strict-fix results remain archived.
+
+## Historical 0.3.0 candidate (superseded)
+
+The following results describe the earlier spacing heuristic on its measured
+inputs. Later witness failures led to its replacement; they are not validation
+claims for the released observation-scale presets above.
 
 Installed-wheel checks run outside the source tree:
 

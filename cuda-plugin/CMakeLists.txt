@@ -12,10 +12,10 @@ if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13)
 endif()
 # The release preparation script copies the exact shared source here. In the
 # development checkout it is taken directly from the common project tree.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cpp/common/physics.hpp")
-  set(MD_CPP "${CMAKE_CURRENT_SOURCE_DIR}/cpp")
-else()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../cpp/common/physics.hpp")
   set(MD_CPP "${CMAKE_CURRENT_SOURCE_DIR}/../cpp")
+else()
+  set(MD_CPP "${CMAKE_CURRENT_SOURCE_DIR}/cpp")
 endif()
 pybind11_add_module(_cuda ${MD_CPP}/cuda/bindings.cpp ${MD_CPP}/cuda/qe.cu
   ${MD_CPP}/cuda/coarse_scan.cu ${MD_CPP}/cuda/refine.cu)

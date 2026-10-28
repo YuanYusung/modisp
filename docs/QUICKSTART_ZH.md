@@ -77,23 +77,22 @@ with Solver(backend="auto", threads=8, chunk_size=100) as solver:
 
 ## 精度档位
 
-0.3.0 默认 `accuracy="balanced"`，在保持 FP64 久期函数与根精修的前提下减少
-采样和独立验证：
+默认 `balanced` 使用相对速度步长不超过 0.25% 的对数网格，`fast` 不超过 0.5%；
+二者仍使用 FP64，但允许不可分辨近根簇发生遗漏或近似，换取更高速度。
 
 ```python
-with Solver(backend="auto", accuracy="balanced") as solver:   # 默认
-    fast = solver(thickness, vp, vs, rho, periods, nmodes=5)
-with Solver(backend="auto", accuracy="high") as solver:       # 0.2.1 逐位
-    exact = solver(thickness, vp, vs, rho, periods, nmodes=5)
-with Solver(backend="auto", accuracy="fast") as solver:       # 显式快速档
-    quick = solver(thickness, vp, vs, rho, periods, nmodes=5)
+with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solver:
+    result = solver(thickness, vp, vs, rho, periods, nmodes=5)
+    approximate = result.approximate_search    # 所有观测网格结果均明确标记
+    uncertain_rank = result.mode_index_uncertain
+    close = result.close_root_mask             # 已恢复根中的相邻近根
 ```
 
-`high` 与 0.2.1 逐位一致；`balanced` 在真实 ModePhys 1,024 模型上 CUDA 约
-2.4×、CPU 约 2.8×，11 套独立参考仍为 0 wrong/missing/extra/unresolved。
-`fast` 是显式 opt-in，误差界大于 balanced。`search_level` 1/2/3 表示自适应
-层级接受，4/5 表示粗/细 dense 回退接受。`numerical_flags` 排除用户裁剪位
-`TRACE_RANGE_TRUNCATED`，便于区分裁剪与数值失败。
+`close_root_rtol=0.005` 表示 0.5%，可配置。`high` 保留完整严格搜索。
+近似档的 `mode` 是恢复根的排序编号；遗漏近根簇后可能错位。`close_root_mask=False`
+不能证明没有漏掉近根。默认根精修容差为 high `1e-6`、balanced `1e-5`、fast `1e-4`；
+显式 `c_tol_rel` 仍优先。`search_level=6/7` 分别表示 balanced/fast 对数网格。
+详见[当前精度与速度报告](TOLERANT_PRESETS.md)。
 
 ## 诊断和编号
 

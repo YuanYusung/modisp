@@ -339,7 +339,7 @@ class Refine {
 }  // namespace
 
 PYBIND11_MODULE(_cuda, m) {
-  m.attr("ABI_VERSION")=3;
+  m.attr("ABI_VERSION")=4;
   m.attr("VERSION")="0.3.0";
   bind_qe(m);
   m.doc() = "CUDA kernels for GPU-accelerated surface-wave dispersion forward "

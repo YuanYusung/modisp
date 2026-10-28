@@ -53,17 +53,30 @@ def test_mixed_dry_wet_batch_and_explicit_ranges():
     assert np.nanmax(cropped.phase_velocity)<=1.
 
 
+
+
+def assert_tolerant(out, reference, accuracy):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
+    from tolerant_metrics import compare
+    metrics=compare(out.phase_velocity,np.asarray(reference)[None,:,None],out.trace_flags,
+                    close_rtol=.005,error_rtol=2e-5 if accuracy=="balanced" else 2e-4)
+    assert metrics["accepted"],metrics
+
 @pytest.mark.parametrize('path',sorted((Path(__file__).parent/'data').glob('B10000_*.npz')),ids=lambda x:x.stem)
-def test_previously_unresolved_benchmark_cases(path):
+@pytest.mark.parametrize('accuracy',['high','balanced','fast'])
+def test_previously_unresolved_benchmark_cases(path,accuracy):
     f=np.load(path)
-    with md.Solver(backend=BACKEND,cmin=.2,accuracy='high') as s:
+    with md.Solver(backend=BACKEND,cmin=.2,accuracy=accuracy) as s:
         out=s(**{k:f[k] for k in FIELDS},periods=f['periods'],nmodes=3)
     ref=f['reference'][0,:3];x=out.phase_velocity[0,:,0]
     if np.any(out.trace_flags&4):
         assert np.isnan(x).all()
         assert np.all(out.status==md.SolveStatus.UNRESOLVED)
     else:
-        np.testing.assert_allclose(x,ref,atol=3e-6,rtol=2e-6)
+        if accuracy=="high":np.testing.assert_allclose(x,ref,atol=3e-6,rtol=2e-6)
+        else:assert_tolerant(out,f["reference"].ravel(),accuracy)
 
 
 def test_unavailable_and_version_checks(monkeypatch):
@@ -84,16 +97,23 @@ def test_unavailable_and_version_checks(monkeypatch):
     with pytest.raises(RuntimeError,match='versions differ'):_loader.load()
 
 
-def test_budget_and_failed_work_diagnostics():
-    with md.Solver(backend=BACKEND,workspace_bytes=1,accuracy='high') as s:
+@pytest.mark.parametrize('accuracy',['high','balanced','fast'])
+def test_budget_and_failed_work_diagnostics(accuracy):
+    with md.Solver(backend=BACKEND,workspace_bytes=1,accuracy=accuracy) as s:
         with pytest.raises(MemoryError,match='workspace'):s([0.],[6.],[3.5],[2.7],[1.])
     # Extreme optical thickness exceeds the explicit search workload ceiling.
-    with md.Solver(backend=BACKEND,accuracy='high') as s:
+    with md.Solver(backend=BACKEND,accuracy=accuracy) as s:
         out=s([1e6,0.],[2.,6.],[.8,3.5],[2.,2.7],[.01],nmodes=2)
-    assert np.all(out.trace_flags&md.TRACE_WORKSPACE_LIMIT)
-    assert np.all(out.trace_flags&md.TRACE_SEARCH_UNCONVERGED)
-    assert np.all(out.status==md.SolveStatus.UNRESOLVED)
-    assert np.isnan(out.phase_velocity).all()
+    if accuracy=='high':
+        assert np.all(out.trace_flags&md.TRACE_WORKSPACE_LIMIT)
+        assert np.all(out.trace_flags&md.TRACE_SEARCH_UNCONVERGED)
+        assert np.all(out.status==md.SolveStatus.UNRESOLVED)
+        assert np.isnan(out.phase_velocity).all()
+    else:
+        # Observation-scale scans have bounded work even for extremely dense
+        # clusters; their recovered ranks are explicitly uncertain.
+        assert np.all(out.trace_flags&md.TRACE_APPROXIMATE_SEARCH)
+        assert np.all(out.mode_index_uncertain)
     assert s.last_result is out
 
 
@@ -139,8 +159,9 @@ def test_uniform_legacy_facade_compatibility():
     assert result.backend_used=='cuda'
 
 
-def test_finite_unrepresentable_model_is_flagged():
-    with md.Solver(backend=BACKEND,accuracy='high') as s:
+@pytest.mark.parametrize('accuracy',['high','balanced','fast'])
+def test_finite_unrepresentable_model_is_flagged(accuracy):
+    with md.Solver(backend=BACKEND,accuracy=accuracy) as s:
         out=s([1e200,0.],[1e200,2e200],[5e199,1e200],[1e200,1e200],[1.],nmodes=3)
     assert np.isnan(out.phase_velocity).all()
     assert out.trace_flags[0,0]&md.TRACE_SEARCH_UNCONVERGED
@@ -157,10 +178,12 @@ def test_empty_cropped_window_has_explicit_state(wave):
     assert np.all(out.root_count==0)
 
 @pytest.mark.parametrize('path',sorted((Path(__file__).parent/'data').glob('witness_*.npz')),ids=lambda x:x.stem)
-def test_independent_witness_regressions(path):
+@pytest.mark.parametrize('accuracy',['high','balanced','fast'])
+@pytest.mark.parametrize('cmin',[None,.2])
+def test_independent_witness_regressions(path,accuracy,cmin):
     f=np.load(path)
     assert bool(f['reference_stable'])
-    with md.Solver(backend=BACKEND,cmin=.2,accuracy='high') as s:
+    with md.Solver(backend=BACKEND,cmin=cmin,accuracy=accuracy) as s:
         out=s(**{k:f[k] for k in FIELDS},periods=f['periods'],nmodes=3)
     # 0.2.0 resolved these seven witnesses on both CPU and CUDA. Preserve that
     # acceptance boundary: returning all UNRESOLVED must not pass a regression.
@@ -171,4 +194,5 @@ def test_independent_witness_regressions(path):
         assert np.isnan(out.phase_velocity).all()
         assert np.all(out.status==md.SolveStatus.UNRESOLVED)
     else:
-        np.testing.assert_allclose(out.phase_velocity[0,:,0],f['reference_hi'][:3],atol=3e-6,rtol=2e-6)
+        if accuracy=='high':np.testing.assert_allclose(out.phase_velocity[0,:,0],f['reference_hi'][:3],atol=3e-6,rtol=2e-6)
+        else:assert_tolerant(out,f['reference_hi'],accuracy)

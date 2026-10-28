@@ -2,6 +2,41 @@
 
 ## 0.3.0 — 2026-10-28
 
+- Use a configurable `close_root_rtol=0.005`: balanced/fast logarithmic velocity
+  steps are at most 0.25%/0.5%; high retains the full 0.2.1 schedule.
+- Keep FP64 evaluation/refinement, with default refinement tolerances
+  1e-6/1e-5/1e-4 for high/balanced/fast. Explicit c_tol_rel overrides the preset.
+- Flag every approximate search and expose recovered-rank uncertainty, observed
+  close-root masks and sampled cluster-risk hints; persist them in CLI NPZs.
+- Separate ordinary errors, close-cluster omissions, ordinal shifts and unjudged
+  reference-prefix/baseline-unresolved results in validation reports.
+- Bump the private ABI to 4 for the configurable observation-scale interface.
+- Measured balanced/fast gains versus same-build high: CPU 3.15x/5.41x
+  (32 threads, 128 models); CUDA 3.63x/4.92x (A800, 1024 models).
+  Both workloads use 70 layers, 100 periods and five modes. Keep isolated-root
+  failures, close clusters, ordinal shifts and unjudged results separate.
+- Validate 140 CPU tests and 143 CUDA tests; all four CUDA sanitizer checks
+  pass. Standalone source distributions reproduce the tested native binaries.
+
+## Historical strict-fix experiment (superseded for balanced/fast)
+
+- Remove spacing-based early acceptance and skipped independent verification:
+  existing witness cases could silently lose a close pair and shift mode labels.
+- Restore all high density levels and the 32,768/65,536 dense pair in every
+  preset; coarse-grid agreement must not bypass unresolved failure signaling.
+- Retain exact FP64 arithmetic and accelerate CPU exact-bracket, sampling-union
+  and nested-dense reuse, with smaller CPU prefix tiles and workspace accounting.
+  Reject larger CUDA caches and smaller GPU tiles after matched experiments
+  showed negligible speed-up and substantially higher memory use.
+- Run witness regressions in all presets and both automatic/explicit ranges;
+  add complete-diagnostic equivalence checks and a strict independent-reference
+  plus interleaved-performance driver.
+- Keep `adaptive_period_threshold` accepted for compatibility, with early
+  acceptance disabled. Original 0.3.0 speed claims describe the unsafe heuristic
+  and do not apply to this corrected implementation.
+
+## Original 0.3.0 candidate (superseded, not the release implementation)
+
 - Add `Solver(accuracy=...)` presets `"high"`, `"balanced"` (new default) and
   `"fast"`. `high` reproduces the 0.2.1 schedule and outputs bit for bit.
 - Accept sparse root sets after a density level once adjacent roots are safely

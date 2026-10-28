@@ -63,6 +63,8 @@ reuse their native thread pool or device allocation across compatible calls.
 | `c_tol_rel` | `1e-6` | Relative phase-speed tolerance |
 | `f_accept` | `1.0` | Optional normalized-function acceptance bound |
 | `search_strategy` | `"qe_adaptive"` | FP64 adaptive search; `"uniform"` is legacy CUDA solid Rayleigh only |
+| `accuracy` | `"balanced"` | Search/verification preset: `"high"`, `"balanced"` or `"fast"` (see below) |
+| `adaptive_period_threshold` | preset | Optional level-1 early-accept period threshold for balanced/fast; level-2 applies below it |
 | `workspace_bytes` | `256*1024**2` | Native work-buffer budget, excluding inputs/results and CUDA context |
 | `chunk_size` | `None` | Optional model-count cap per chunk |
 | `profile` | `False` | Collect stage timings and cache/queue analysis in `stats()` |
@@ -72,14 +74,38 @@ An explicit unavailable CUDA request raises `BackendUnavailableError`.
 Automatic selection records its choice and reason. Version/ABI mismatches raise
 an installation error. Numerical failures never trigger a backend change.
 
+### Accuracy presets
+
+The secular function, FP64 root refinement and diagnostics are identical in
+every preset. Presets only change how much sampling and independent verification
+is spent before a root set is accepted.
+
+| Preset | Early adaptive acceptance | Guarded verification | Coarse / fine dense floor | Use |
+|---|---|---|---|---|
+| `high` | none (all four levels) | every level-3 trace | 32,768 / 65,536 | exact 0.2.1 behavior; bitwise baseline |
+| `balanced` | level 1 for T ≥ 1.0 s, level 2 otherwise, only with a spacing/trough safety check | only unsafe or close-root traces | 8,192 / 32,768 | default production trade-off |
+| `fast` | level 1 for T ≥ 0.63 s, level 2 otherwise, same safety check | only unsafe or close-root traces | 4,096 / 16,384 | explicit opt-in speed mode |
+
+`high` reproduces the 0.2.1 outputs bit for bit. `balanced` and `fast` are
+opt-in accuracy/performance trade-offs; `balanced` retains the independent
+reference acceptance described in [validation](VALIDATION.md). The dense
+fallback falls back to the exact `high` schedule for traces that cannot prove
+their spacing or grid agreement, so an extreme close-root case is never newly
+unresolved merely because the coarse floor was cheaper. `uniform` ignores
+`accuracy` and reports `accuracy="uniform"`; an explicit preset with `uniform`
+raises `ValueError`.
+
 ## Results and diagnostics
 
 `DispersionBatch` contains:
 
 - `phase_velocity`, `mode_mask`, `status`: `[B,nmodes,T]` arrays.
 - `period`: a copy of the input periods; `mode`: ascending integers.
-- `trace_flags`, `search_level`, `root_count`: `[B,T]` search diagnostics.
+- `trace_flags`, `numerical_flags`, `search_level`, `root_count`: `[B,T]`
+  search diagnostics. `numerical_flags` excludes only
+  `TRACE_RANGE_TRUNCATED`, separating user cropping from numerical failures.
 - `search_bounds`: `[B,2]`, determined before chunking.
+- `accuracy`: the preset used (`"high"`, `"balanced"`, `"fast"` or `"uniform"`).
 - `backend_used`, `backend_reason`, `wave`, `mode_convention`.
 
 `SolveStatus` values are `VALID=0`, `NOT_FOUND=1`, `UNRESOLVED=2` and
@@ -87,9 +113,11 @@ an installation error. Numerical failures never trigger a backend change.
 its window. An unresolved trace has all modes NaN. `root_count` is capped at
 `nmodes+2`, including two guard roots; an unresolved count is -1.
 
-`search_level=3` denotes adaptive acceptance and 5 dense-fallback acceptance.
--1 denotes an unresolved search, -2 legacy uniform, -3 an analytically empty SH
-family, and -4 an empty intersection between the requested and trapped domains.
+`search_level=1/2/3` denotes adaptive acceptance at that density level;
+`4` denotes acceptance by the coarse dense fallback and `5` by the fine dense
+fallback (the `high` preset accepts only at 3/5). -1 denotes an unresolved
+search, -2 legacy uniform, -3 an analytically empty SH family, and -4 an empty
+intersection between the requested and trapped domains.
 Flags are cumulative: a later successful fallback can coexist with an earlier
 workspace or root-conflict flag.
 
@@ -111,7 +139,18 @@ A budget too small for one model raises `MemoryError` before allocation.
 Hardware allocation and driver failures raise explicitly. `stats()` reports
 algorithm counters and estimated native work-buffer bytes.
 
-Version 0.2.1 retains an existing compatible allocation for smaller tail calls;
+`workspace_bytes` is a byte budget, not a per-trace sampling capacity. The
+adaptive search samples at most `sampling_capacity=2048` points per trace
+(independent of `workspace_bytes`); reaching that limit sets
+`TRACE_WORKSPACE_LIMIT` and hands the trace to the dense fallback. Increasing
+`workspace_bytes` therefore does not reduce `capacity_hits`; it only allows more
+models per native allocation. `stats()` exposes `accuracy`, `period_threshold`,
+`sampling_capacity`, `early_accepts`, `verification_skipped`,
+`dense_coarse_accepted`, `dense_fine_escalated`, `trough_risks` and (CUDA)
+`dense_floor4`/`dense_floor5`. `high` uses no early acceptance and verifies every
+level-3 trace, so these counters are zero.
+
+Version 0.3.0 retains an existing compatible allocation for smaller tail calls;
 `capacity_models` reports this high-water capacity and `engine_allocations`
 reports new allocations during the latest call. A reduced budget/chunk cap or
 changed geometry still replaces the workspace. Input values are refreshed on

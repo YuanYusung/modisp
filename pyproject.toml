@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "modisp"
-version = "0.2.1"
+version = "0.3.0"
 description = "FP64 multimodal Rayleigh and Love dispersion with CPU and optional CUDA backends"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,7 +14,7 @@ dependencies = ["numpy>=1.24"]
 authors = [{name = "Yuan Yusong"}]
 
 [project.optional-dependencies]
-cuda12 = ["modisp-cuda12==0.2.1; platform_system=='Linux' and platform_machine=='x86_64'"]
+cuda12 = ["modisp-cuda12==0.3.0; platform_system=='Linux' and platform_machine=='x86_64'"]
 test = ["pytest>=7", "scipy>=1.10", "disba==0.7.0"]
 docs = ["sphinx>=7", "myst-parser>=2"]
 
@@ -24,7 +24,7 @@ modisp = "modisp.cli:main"
 [tool.scikit-build]
 cmake.version = ">=3.22"
 wheel.packages = ["python/modisp"]
-sdist.exclude = [".venv*/**", "build*/**", "dist/**", "research/**", "cuda-plugin/**", "wheelhouse/**", "release/**", "source-*.tgz", "**/__pycache__/**", "**/.numba-cache/**", "**/.pytest_cache/**"]
+sdist.exclude = [".venv*/**", ".bench/**", "build*/**", "dist/**", "research/**", "cuda-plugin/**", "wheelhouse/**", "release/**", "source-*.tgz", "**/__pycache__/**", "**/.numba-cache/**", "**/.pytest_cache/**", "**/._*", "**/.DS_Store"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

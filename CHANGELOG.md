@@ -1,5 +1,29 @@
 # Changes
 
+## 0.3.0 — 2026-10-28
+
+- Add `Solver(accuracy=...)` presets `"high"`, `"balanced"` (new default) and
+  `"fast"`. `high` reproduces the 0.2.1 schedule and outputs bit for bit.
+- Accept sparse root sets after a density level once adjacent roots are safely
+  separated from the local bracket width and no low-|F| hidden-pair trough is
+  present. Skip the independent guarded family only for those safe traces.
+- Use an 8,192/32,768 point dense floor in `balanced` (4,096/16,384 in `fast`),
+  accept a coarse dense result only when its spacing is safe, and fall back to
+  the exact high dense schedule for traces that cannot prove it. This prevents
+  newly unresolved extreme close-root traces.
+- Add `adaptive_period_threshold`, `numerical_flags`, `accuracy` on
+  `DispersionBatch`, new `search_level` values 1/2/4, and accuracy/early/dense
+  counters in `stats()`. Document that `workspace_bytes` is not the per-trace
+  sampling capacity (`sampling_capacity=2048`).
+- Bump the private extension ABI to 3; install matching 0.3.0 CPU/CUDA wheels.
+- Recorded 1,024-model steady gains of 2.39x CUDA and 2.73x CPU against 0.2.1,
+  with zero wrong/missing/extra/newly-unresolved results, maximum common error
+  2.15e-7 km/s. The complete Base workload (29,379 models) improved 2.44x in
+  solver time and 2.38x end to end; the Aug 10,000 stress set improved 2.48x.
+  Both retained zero wrong/missing/extra/newly-unresolved cells. The 11
+  independent FP64 suites remain 0 wrong/missing/extra/unresolved for high,
+  balanced and fast; `high` remains byte-identical to 0.2.1.
+
 ## 0.2.1 — 2026-10-28
 
 - Precompute exact model/period constants in the FP64 CPU and CUDA recurrences;

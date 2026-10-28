@@ -339,8 +339,8 @@ class Refine {
 }  // namespace
 
 PYBIND11_MODULE(_cuda, m) {
-  m.attr("ABI_VERSION")=2;
-  m.attr("VERSION")="0.2.1";
+  m.attr("ABI_VERSION")=3;
+  m.attr("VERSION")="0.3.0";
   bind_qe(m);
   m.doc() = "CUDA kernels for GPU-accelerated surface-wave dispersion forward "
             "modeling. Low-level stage interface; the public API is in "

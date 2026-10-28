@@ -1,5 +1,56 @@
 # Validation
 
+## 0.3.0 — 2026-10-28
+
+Installed-wheel checks run outside the source tree:
+
+| Platform | Python | Backend | Public suite | Additional checks |
+|---|---|---|---|---|
+| macOS arm64 | 3.12.12 | CPU | 64 passed, 3 skipped | pip check, installed CLI/smoke |
+| Ubuntu 22.04 x86_64 | 3.10.12 | CPU | 64 passed, 3 skipped | pip check, CLI, examples |
+| Same host, A800/sm80, CUDA 12.6 | 3.10.12 | CUDA | 67 passed, 0 skipped | memcheck/racecheck/synccheck/initcheck: 0 errors, 0 leaked bytes |
+
+The 11 independent solid-Rayleigh reference suites contain 171 models, 6,083
+period traces and 24,332 stable mode cells. All cells were judged; none was
+excluded as reference-unstable. `high`, `balanced` and `fast` each have zero
+wrong, missing, extra or unresolved results. Maximum common absolute errors are
+2.586418e-7 km/s for `high` and 2.624469477296998e-7 km/s for `balanced`/`fast`;
+the threshold remains max(3e-6, 2e-6*abs(reference)) km/s.
+
+`accuracy="high"` reproduces 0.2.1 bit for bit on seven compact CPU/CUDA
+fixtures and on the complete Base output: 10,764,863 finite cells, maximum
+difference 0.0, and all status/flags/level/root-count/bounds diagnostics equal.
+The 1,024-model before/after A/B also retained exact identity for `high` and
+measured a 1.0014x steady speed ratio (no regression).
+
+`balanced` against 0.2.1 on the same 1,024-mode task retained zero wrong,
+missing, extra or newly-unresolved cells; maximum common error was 2.1494e-7
+km/s, with no cell above 1e-6. The CPU comparison had five extra finite cells
+(roots found by balanced where 0.2.1 had no value), zero missing, zero new
+unresolved and the same maximum. The only changed trace flag was
+`TRACE_WORKSPACE_LIMIT` (1,520 traces, all reduced). Search levels differ by
+design. On the complete Base workload, balanced retained zero
+wrong/missing/extra/newly-unresolved cells and maximum common error 2.8042e-7
+km/s; mode mask, status, root count and bounds were unchanged. The Aug 10,000
+stress set also retained zero wrong/missing/extra/newly-unresolved cells and
+maximum 2.9777e-7 km/s.
+
+The separate public extreme-fixture set retains four unresolved traces per
+backend from 0.2.0 under `accuracy="high"`: all three B10000 fixtures and
+witness_model9384_period11. Their NaNs, status, flags and root counts match the
+baseline. These cases are not part of the 6,083-trace archive above. Passing
+their tests validates honest failure signaling; it does not mean those physical
+roots were recovered under the high schedule. Other tests explicitly reject an
+all-UNRESOLVED regression.
+
+The A/B runs used interleaved order, a separate warmup and five steady samples.
+CUDA steadies were 7.4857 s (0.2.1) and 3.1352 s (balanced), a 2.39x gain. CPU
+64-thread steadies were 31.6240 s and 11.5768 s, a 2.73x gain. Complete Base
+solver time was 207.92 s and 85.27 s (2.44x); end-to-end time was 211.46 s and
+88.69 s (2.38x). The Aug 10,000 stress set measured 74.11 s and 29.84 s (2.48x).
+All accepted first/last outputs had zero wrong, missing, extra and newly
+unresolved results.
+
 ## 0.2.1 — 2026-10-28
 
 Installed-wheel checks run outside the source tree:

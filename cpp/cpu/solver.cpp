@@ -12,16 +12,17 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include "common/accuracy.hpp"
 #include "common/physics.hpp"
 
 namespace py=pybind11;
 using Array=py::array_t<double,py::array::c_style|py::array::forcecast>;
 constexpr int CAP=2048;
 using Point=std::pair<double,double>;
-using Counters=std::array<unsigned long long,16>;
+using Counters=std::array<unsigned long long,21>;
 using Clock=std::chrono::steady_clock;
 double seconds(Clock::time_point t){return std::chrono::duration<double>(Clock::now()-t).count();}
-const char *counter_names[]={"evaluations","extrema_proposals","brackets","adaptive_converged","dense_converged","unconverged","capacity_hits","near_cutoff","nonfinite","refinement_failed","searches","rejected_f","analytical_empty","range_empty","verification_traces","family_conflicts"};
+const char *counter_names[]={"evaluations","extrema_proposals","brackets","adaptive_converged","dense_converged","unconverged","capacity_hits","near_cutoff","nonfinite","refinement_failed","searches","rejected_f","analytical_empty","range_empty","verification_traces","family_conflicts","early_accepts","verification_skipped","dense_coarse_accepted","dense_fine_escalated","trough_risks"};
 extern "C" void md_dunkin_grid(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
 extern "C" void md_dunkin_grid_f32(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
 extern "C" double md_dunkin_point(const double*,const double*,const double*,const double*,int,double,double,int);
@@ -63,6 +64,8 @@ struct Scratch {
   bool profile=false;
   double sample_s=0.,inverse_s=0.,sort_s=0.,refine_s=0.,adaptive_s=0.,dense_s=0.;
   unsigned long long cache_hits=0,cache_misses=0;
+  double sample_gap=0.;int risk=0;bool escalated=false;
+  md::AccuracyPolicy policy{};
   Counters stats{};
   Scratch(){points.reserve(CAP);extra.reserve(CAP);cache.reserve(CAP);merged.reserve(CAP);}
 };
@@ -98,7 +101,38 @@ bool collect_roots(const md::Medium &m,double omega,Scratch &w,int K,double tol,
   return true;
 }
 
-bool search_adaptive(const Model &model,double period,double lo,double hi,double delta,int K,double tol,Scratch &w,unsigned &flags,bool shifted=false){
+bool roots_are_spaced(const std::vector<double> &roots,double sample_gap,double gap_factor){
+  if(roots.empty()||!(gap_factor>0.))return false;
+  for(size_t m=1;m<roots.size();++m){
+    const double gap=roots[m]-roots[m-1];
+    const double floor=16.*2.220446049250313e-16*std::fmax(1.,std::fabs(roots[m]));
+    if(gap<=gap_factor*std::fmax(sample_gap,floor))return false;
+  }
+  return true;
+}
+
+// Minimum sign-change bracket width plus a normalized low-|F| trough test.
+// A trough without a sign change is the signature of a missed close pair.
+void spacing_risk(const std::vector<Point> &p,double threshold,double &min_gap,int &risk){
+  min_gap=0.;risk=0;
+  for(size_t i=0;i+1<p.size();++i){
+    const double fa=p[i].second,fb=p[i+1].second;
+    if(!std::isfinite(fa)||!std::isfinite(fb))continue;
+    if((fa<0.)!=(fb<0.)){
+      const double g=p[i+1].first-p[i].first;
+      if(!(min_gap>0.)||g<min_gap)min_gap=g;
+    }
+  }
+  if(!(threshold>0.))return;
+  for(size_t i=1;i+1<p.size();++i){
+    const double f0=p[i-1].second,f1=p[i].second,f2=p[i+1].second;
+    if(!std::isfinite(f0)||!std::isfinite(f1)||!std::isfinite(f2))continue;
+    if(((f0<0.)!=(f1<0.))||((f1<0.)!=(f2<0.)))continue;
+    if(std::fabs(f1)<threshold&&std::fabs(f1)<std::fabs(f0)&&std::fabs(f1)<std::fabs(f2)){risk=1;return;}
+  }
+}
+
+bool search_adaptive(const Model &model,double period,double lo,double hi,double delta,int K,double tol,Scratch &w,unsigned &flags,const md::AccuracyPolicy &policy,bool shifted=false){
   const auto &m=w.medium;const double freq=1./period,omega=md::two_pi<double>()/period;
   const double nlo=freq*md::density_base(m,lo),nhi=freq*md::density_base(m,hi),step=delta*.25;
   const double count=std::ceil(std::fmax(0.,nhi-nlo)/step);
@@ -157,20 +191,29 @@ bool search_adaptive(const Model &model,double period,double lo,double hi,double
     if(w.profile)w.sort_s+=seconds(sort_start);
   }
   w.cache=w.points;
+  w.sample_gap=0.;w.risk=0;
+  if(policy.accuracy!=md::Accuracy::High)spacing_risk(w.points,policy.trough_threshold,w.sample_gap,w.risk);
   if(!w.points.empty()&&md::ambiguous_sh_cutoff(m,w.points.back().first,w.points.back().second)){flags|=16;return false;}
   if(!collect_roots(m,omega,w,K,tol)){flags|=32;++w.stats[8];return false;}
+  if(w.risk)++w.stats[20];
   return true;
 }
 
-bool search_dense(const Model &model,double period,double lo,double hi,int factor,int K,double tol,Scratch &w,unsigned &flags){
+bool search_dense(const Model &model,double period,double lo,double hi,int floor_cells,int factor,int K,double tol,Scratch &w,unsigned &flags,const md::AccuracyPolicy &policy){
   const auto &m=w.medium;double need=md::dense_workload(m,period,lo,hi);
   w.roots.clear();++w.stats[10];
   if(!std::isfinite(need)||need>524288.){flags|=8;++w.stats[6];return false;}
-  int cells=32768;while(cells<need)cells*=2;cells*=factor;
+  int cells=floor_cells;while(cells<need)cells*=2;cells*=factor;
+  w.sample_gap=cells>0?(hi-lo)/cells:0.;w.risk=0;
   const double omega=md::two_pi<double>()/period;
   for(int start=0;start<cells;start+=CAP-1){
     w.points.clear();int n=std::min(CAP,cells-start+1);
     for(int j=0;j<n;++j){double c=lo+(hi-lo)*(start+j)/cells;w.points.emplace_back(c,evaluate(m,omega,c,w));}
+    if(policy.accuracy!=md::Accuracy::High){
+      double gap=0.;int risk=0;spacing_risk(w.points,policy.trough_threshold,gap,risk);
+      // Keep the uniform dense cell width as the sampling resolution.
+      w.risk|=risk;
+    }
     if(start+n==cells+1&&md::ambiguous_sh_cutoff(m,w.points.back().first,w.points.back().second)){flags|=16;return false;}
     if(!collect_roots(m,omega,w,K,tol,start==0,start+n==cells+1)){flags|=32;++w.stats[8];return false;}
     // Both dense levels retain their full-window spacing. Higher roots cannot
@@ -178,14 +221,16 @@ bool search_dense(const Model &model,double period,double lo,double hi,int facto
     // explicitly capped at K. No test of the requested prefix is removed.
     if(static_cast<int>(w.roots.size())>=K)break;
   }
+  if(w.risk)++w.stats[20];
   return true;
 }
 
 class CpuSolver {
   int threads_;Pool pool;std::vector<Scratch> work;
-  std::vector<Model> models;
+  std::vector<Model> models;md::AccuracyPolicy policy_;
  public:
-  explicit CpuSolver(int threads):threads_(threads),pool(threads),work(threads){if(threads<1||threads>256)throw py::value_error("threads must be 1..256");}
+  CpuSolver(int threads,int accuracy,double period_threshold):threads_(threads),pool(threads),work(threads),
+    policy_(md::make_accuracy_policy(accuracy,period_threshold)){if(threads<1||threads>256)throw py::value_error("threads must be 1..256");}
   py::tuple run(Array h,Array vp,Array vs,Array rho,Array periods,Array bounds,int modes,int wave,bool automatic,double tol,double accept,bool profile=false){
     if(h.ndim()!=2||h.shape(0)<1||h.shape(1)<1)throw py::value_error("model must be [B,L]");
     int B=h.shape(0),L=h.shape(1),nf=periods.size(),K=modes+2;
@@ -197,7 +242,7 @@ class CpuSolver {
     double prepare_s=0.,solve_s=0.;
     {
       py::gil_scoped_release release;
-      for(auto &w:work){w.stats.fill(0);w.profile=profile;w.sample_s=w.inverse_s=w.sort_s=w.refine_s=w.adaptive_s=w.dense_s=0.;w.cache_hits=w.cache_misses=0;
+      for(auto &w:work){w.stats.fill(0);w.profile=profile;w.policy=policy_;w.sample_gap=0.;w.risk=0;w.escalated=false;w.sample_s=w.inverse_s=w.sort_s=w.refine_s=w.adaptive_s=w.dense_s=0.;w.cache_hits=w.cache_misses=0;
         for(auto *v:{&w.roots,&w.previous,&w.coarse,&w.full,&w.guarded})v->reserve(K);
         w.ka.resize(L);w.kb.resize(L);w.gammk.resize(L);}
       auto stage_start=profile?Clock::now():Clock::time_point{};
@@ -226,9 +271,12 @@ class CpuSolver {
         w.medium=model.view;w.medium.ka=w.ka.data();w.medium.kb=w.kb.data();w.medium.gammk=w.gammk.data();
         if(hi>lo&&model.view.wave&&!md::sh_has_guide(model.view)){for(int m=0;m<modes;++m)output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=NAN;flags.mutable_data()[t]=0;levels.mutable_data()[t]=-3;counts.mutable_data()[t]=0;++w.stats[12];return;}
         if(hi<=lo){for(int m=0;m<modes;++m)output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=NAN;flags.mutable_data()[t]=0;levels.mutable_data()[t]=-4;counts.mutable_data()[t]=0;++w.stats[13];return;}
+        const md::AccuracyPolicy &policy=w.policy;
+        const int early=policy.accuracy==md::Accuracy::High?3:(period>=policy.period_threshold?1:2);
+        auto spaced=[&](double factor){return w.risk==0&&!w.roots.empty()&&roots_are_spaced(w.roots,w.sample_gap,factor);};
         bool shifted_companion=false;
-        auto search=[&](bool guarded,int begin=0){
-        previous_ok=false;w.previous.clear();
+        auto search=[&](bool guarded,int begin=0,bool exact_dense=false){
+        previous_ok=false;w.previous.clear();w.escalated=false;
         auto &coarse=w.coarse;coarse.clear();bool coarse_ok=false;
         for(int lev=begin;lev<6;++lev){
           const double low=automatic&&lev<2?fmin((lev==0?4.:2.)*lo,(lo+hi)*.5):lo;
@@ -238,7 +286,9 @@ class CpuSolver {
           // sample/capacity check. Dense fallbacks keep the original window.
           if(guarded&&lev>0&&lev<4&&previous_ok&&static_cast<int>(w.previous.size())==K&&!(word&(8|32|64|512)))adaptive_hi=std::fmin(hi,w.previous.back()*(1.+4.*tol));
           const auto t=profile?Clock::now():Clock::time_point{};
-          bool ok=lev<4?search_adaptive(model,period,low,adaptive_hi,.5/(1<<lev),K,tol,w,word,guarded&&shifted_companion):search_dense(model,period,lo,hi,lev==4?1:2,K,tol,w,word);
+          bool ok=lev<4?search_adaptive(model,period,low,adaptive_hi,.5/(1<<lev),K,tol,w,word,policy,guarded&&shifted_companion)
+                       :search_dense(model,period,lo,hi,exact_dense?32768:(lev==4?policy.dense_floor4:policy.dense_floor5),
+                                     exact_dense?(lev==4?1:2):(lev==4?policy.dense_factor4:policy.dense_factor5),K,tol,w,word,policy);
           if(profile){if(lev<4)w.adaptive_s+=seconds(t);else w.dense_s+=seconds(t);}
           bool same=ok&&previous_ok&&w.roots.size()==w.previous.size();
           for(size_t m=0;m<w.roots.size()&&same;++m){same=md::roots_agree(w.roots[m],w.previous[m],tol);if(m&&!(w.roots[m]>w.roots[m-1]))same=false;}
@@ -247,28 +297,41 @@ class CpuSolver {
           if(same&&(lev==3||lev==5)&&coarse_ok&&!md::contains_witnesses(w.roots.data(),w.roots.size(),coarse.data(),coarse.size(),K,tol)){
             same=false;if(!(word&1024))++w.stats[15];word|=1024;
           }
-          // Nested density points can share a missed pair. Always visit all
-          // four prescribed adaptive densities before accepting agreement.
+          const bool safe_adaptive=ok&&(word&(8|32|64|512|16|1024))==0&&spaced(policy.gap_factor);
+          const bool safe_dense=ok&&(word&(16|32|1024))==0&&spaced(policy.dense_gap_factor)&&!exact_dense;
+          if(policy.accuracy!=md::Accuracy::High&&lev>=1&&lev<=2&&lev>=early&&same&&safe_adaptive){++w.stats[16];return lev;}
+          if(policy.allow_dense_early&&lev==4&&!guarded&&safe_dense){++w.stats[18];return 4;}
+          if(policy.allow_dense_early&&lev==5&&w.escalated&&safe_dense){++w.stats[19];return 5;}
+          // Nested density points can share a missed pair. The HIGH schedule
+          // always visits all four prescribed adaptive densities and both dense
+          // resolutions before accepting agreement.
           if(same&&(lev==3||lev==5))return lev;
+          if(lev==4)w.escalated=true;
           previous_ok=ok;w.previous=w.roots;
         }return -1;};
         level=search(false);
-        if(level==3&&!(word&(8|32|64|512))){
-          ++w.stats[14];auto &full=w.full;full=w.roots;
-          shifted_companion=static_cast<int>(full.size())<K;
-          int check_level=search(true);bool same=check_level>=0&&full.size()==w.roots.size();
-          for(size_t m=0;m<full.size()&&same;++m)same=md::roots_agree(full[m],w.roots[m],tol);
-          if(same)level=std::max(level,check_level);
-          else{
-            if(!(word&1024))++w.stats[15];word|=1024;
-            if(check_level<0)level=-1;
-            else{auto &guarded=w.guarded;guarded=w.roots;level=search(false,4);
-              if(level>=0&&(!md::contains_witnesses(w.roots.data(),w.roots.size(),full.data(),full.size(),K,tol)||!md::contains_witnesses(w.roots.data(),w.roots.size(),guarded.data(),guarded.size(),K,tol)))level=-1;
+        if(level<0&&policy.accuracy!=md::Accuracy::High)level=search(false,4,true);
+        if(level>=1&&level<=3&&!(word&(8|32|64|512))){
+          const bool safe=spaced(policy.gap_factor);
+          const bool verify=(policy.accuracy==md::Accuracy::High)?(level==3)
+                           :(level==3&&(!policy.verify_safe_skip||!safe));
+          if(verify){
+            ++w.stats[14];auto &full=w.full;full=w.roots;
+            shifted_companion=static_cast<int>(full.size())<K;
+            int check_level=search(true,0,true);bool same=check_level>=0&&full.size()==w.roots.size();
+            for(size_t m=0;m<full.size()&&same;++m)same=md::roots_agree(full[m],w.roots[m],tol);
+            if(same)level=std::max(level,check_level);
+            else{
+              if(!(word&1024))++w.stats[15];word|=1024;
+              if(check_level<0)level=-1;
+              else{auto &guarded=w.guarded;guarded=w.roots;level=search(false,4,true);
+                if(level>=0&&(!md::contains_witnesses(w.roots.data(),w.roots.size(),full.data(),full.size(),K,tol)||!md::contains_witnesses(w.roots.data(),w.roots.size(),guarded.data(),guarded.size(),K,tol)))level=-1;
+              }
             }
-          }
+          }else ++w.stats[17];
         }
         ready=level>=0;
-        if(ready)++w.stats[level==3?3:4];
+        if(ready)++w.stats[(level>=1&&level<=3)?3:4];
         if(!ready){word|=4;++w.stats[5];}
         bool cutoff=false;
         for(int m=0;m<modes;++m){
@@ -281,8 +344,11 @@ class CpuSolver {
       });
       if(profile)solve_s=seconds(stage_start);
     }
-    py::dict stats;for(int j=0;j<16;++j){unsigned long long v=0;for(auto&w:work)v+=w.stats[j];stats[counter_names[j]]=v;}
+    py::dict stats;for(int j=0;j<21;++j){unsigned long long v=0;for(auto&w:work)v+=w.stats[j];stats[counter_names[j]]=v;}
     stats["threads"]=threads_;stats["strategy"]="qe_adaptive";
+    stats["accuracy"]=md::accuracy_name(policy_.accuracy);
+    stats["period_threshold"]=policy_.period_threshold;
+    stats["sampling_capacity"]=CAP;
     if(profile){py::dict timing;timing["model_prepare"]=prepare_s;timing["search_wall"]=solve_s;
       double sample=0.,inverse=0.,sort=0.,refine=0.,adaptive=0.,dense=0.;unsigned long long hits=0,misses=0;
       for(auto &w:work){sample+=w.sample_s;inverse+=w.inverse_s;sort+=w.sort_s;refine+=w.refine_s;adaptive+=w.adaptive_s;dense+=w.dense_s;hits+=w.cache_hits;misses+=w.cache_misses;}
@@ -293,8 +359,8 @@ class CpuSolver {
 };
 
 PYBIND11_MODULE(_cpu,m){
-  m.attr("ABI_VERSION")=2;m.attr("VERSION")="0.2.1";
-  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int>()).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
+  m.attr("ABI_VERSION")=3;m.attr("VERSION")="0.3.0";
+  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
   m.def("bounds",[](Array h,Array vp,Array vs,Array rho,int wave,py::object low,py::object high){
     int B=h.shape(0),L=h.shape(1);py::array_t<double> result({B,2});
     const bool auto_low=low.is_none(),auto_hi=high.is_none();double given_low=auto_low?0.:low.cast<double>(),given_hi=auto_hi?0.:high.cast<double>();

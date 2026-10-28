@@ -26,10 +26,12 @@ def compare(x, y):
     both = fx & fy
     error = np.abs(x["phase_velocity"][both]-y["phase_velocity"][both])
     diagnostics = {k: int(np.count_nonzero(x[k] != y[k])) for k in RESULTS if k != "phase_velocity"}
+    thresholds = {str(t): int(np.count_nonzero(error > t)) for t in (1e-6, 1e-5, 1e-4, 1e-3)}
     return dict(wrong=int(np.count_nonzero(error > np.maximum(3e-6, 2e-6*np.abs(x["phase_velocity"][both])))),
                 missing=int(np.count_nonzero(fx & ~fy)), extra=int(np.count_nonzero(~fx & fy)),
                 newly_unresolved=int(np.count_nonzero(((y["trace_flags"] & 4) != 0) & ((x["trace_flags"] & 4) == 0))),
                 max_common_abs_error=float(error.max()) if error.size else None,
+                finite_common=int(np.count_nonzero(both)), error_counts_gt=thresholds,
                 diagnostics_changed=diagnostics)
 
 
@@ -71,6 +73,9 @@ def main():
     p.add_argument("--workspace-bytes", type=int, default=256*1024**2)
     p.add_argument("--native-chunk", type=int)
     p.add_argument("--profile", action="store_true")
+    p.add_argument("--accuracy", choices=("high", "balanced", "fast"))
+    p.add_argument("--allow-accuracy-change", action="store_true",
+                   help="do not fail when outputs differ; still report the differences")
     args = p.parse_args()
     if min(args.models, args.repeats, args.period_stride) < 1:
         p.error("model/sample/stride counts must be positive")
@@ -97,6 +102,8 @@ def main():
                        "--workspace-bytes", str(args.workspace_bytes)]
             if args.profile:
                 command.append("--profile")
+            if args.accuracy:
+                command.extend(["--accuracy", args.accuracy])
             if args.native_chunk:
                 command.extend(["--native-chunk", str(args.native_chunk)])
             stderr = (out / f"{name}.stderr.log").open("w")
@@ -145,7 +152,8 @@ def main():
         for call in ("first", "last"):
             with np.load(out / f"before.{call}.npz") as a, np.load(out / f"after.{call}.npz") as b:
                 report["regression"][call] = compare(a, b)
-        report["passed"] = all(not any(m[k] for k in ("wrong", "missing", "extra", "newly_unresolved")) and not any(m["diagnostics_changed"].values()) for m in report["regression"].values())
+        report["exact_equal"] = all(not any(m[k] for k in ("wrong", "missing", "extra", "newly_unresolved")) and not any(m["diagnostics_changed"].values()) for m in report["regression"].values())
+        report["passed"] = report["exact_equal"] or bool(args.allow_accuracy_change)
         atomic_json(out / "report.json", report)
         if not report["passed"]:
             raise SystemExit(2)

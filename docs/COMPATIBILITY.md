@@ -1,14 +1,17 @@
 # Compatibility
 
-modisp 0.2.0 requires Python 3.10 or newer. The CI configuration includes
-CPython 3.10–3.14 on Ubuntu and macOS; configured jobs are distinct from the
-local release checks listed below.
+modisp 0.3.0 requires Python 3.10 or newer. The CPU extension and the optional
+CUDA plugin share private ABI version 3; mixing distribution versions raises an
+installation error. The default `accuracy="balanced"` changes search sampling but
+not the FP64 physics; use `accuracy="high"` for bit-identical 0.2.1 outputs.
+The CI configuration includes CPython 3.10–3.14 on Ubuntu and macOS; configured
+jobs are distinct from the local release checks listed below.
 
 | Platform | Python | Backend | Release checks |
 |---|---|---|---|
-| macOS 27.0.1 arm64 | 3.12.12 | CPU | 44 passed, 1 CUDA-only skipped; wheel/sdist, examples, CLI and smoke |
-| Ubuntu 22.04 / Linux x86_64 | 3.10.12 | CPU | 44 passed, 1 CUDA-only skipped; wheel, examples, CLI and smoke |
-| Same Linux host, NVIDIA A800/sm_80, CUDA 12.6 | 3.10.12 | CUDA | 45 passed; matching plugin wheel, examples, CLI and smoke |
+| macOS 27.0.1 arm64 | 3.12.12 | CPU | 64 passed, 3 skipped; wheel/sdist, examples, CLI and smoke |
+| Ubuntu 22.04 / Linux x86_64 | 3.10.12 | CPU | 64 passed, 3 skipped; wheel, examples, CLI and smoke |
+| Same Linux host, NVIDIA A800/sm_80, CUDA 12.6 | 3.10.12 | CUDA | 67 passed, 0 skipped; matching plugin wheel, examples, CLI and smoke |
 
 Binary wheels are platform- and CPython-specific. Linux wheels use native
 `linux_x86_64` tags rather than claiming manylinux portability. CUDA source

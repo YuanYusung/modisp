@@ -1,4 +1,4 @@
-# modisp 0.2.1
+# modisp 0.3.0
 
 modisp is an FP64, GPU-accelerated package for batched multimode Rayleigh/P–SV
 and Love phase-velocity calculations in 1-D layered elastic media. A portable
@@ -11,7 +11,7 @@ exploration and synthetic-data workflows. Units are km, km/s, g/cm³ and seconds
 Install the wheel matching your Python and platform, or build the CPU source:
 
 ```sh
-python -m pip install /path/to/modisp-0.2.1-<matching-tags>.whl
+python -m pip install /path/to/modisp-0.3.0-<matching-tags>.whl
 modisp doctor
 ```
 
@@ -20,10 +20,11 @@ separate `modisp-cuda12` wheel with exactly the same version. NumPy is the only
 Python runtime dependency. See [installation and deployment](docs/INSTALL.md).
 
 See [performance measurement and the ModePhys workflow](docs/PERFORMANCE.md) for
-0.2.1 profiling, persistent workspace reuse and reproducible real-task tests.
-On matched 1,024-model inputs, same-host steady throughput improved 4.56% on
-64 CPU threads and 5.34% on an A800; the complete 29,379-model Base run improved
-4.85% end to end, with byte-identical numerical outputs and diagnostics.
+0.3.0 profiling, reproducible real-task tests and the accuracy/performance
+trade-off. On matched 1,024-model inputs, `accuracy="balanced"` (the new default)
+improves steady throughput by 2.39x on an A800 and 2.73x on 64 CPU threads
+against 0.2.1, with zero wrong/missing/extra/newly-unresolved cells and maximum
+common error 2.15e-7 km/s. `accuracy="high"` keeps the 0.2.1 outputs bit for bit.
 
 ## Unified dispersion interface
 
@@ -57,6 +58,17 @@ from modisp import Solver
 with Solver(backend="cpu", threads=4) as solver:
     result = solver(*model.T, periods, nmodes=3, wave="love")
     print(solver.stats(), solver.last_result is result)
+```
+
+`accuracy="balanced"` is the default. The search still evaluates the same FP64
+secular function and refines every accepted bracket in FP64; the preset only
+reduces adaptive sampling/verification and the dense fallback. Select
+`accuracy="high"` for bit-identical 0.2.1 behavior, or `accuracy="fast"` for an
+explicit larger speed/accuracy trade-off:
+
+```python
+with Solver(backend="cuda", accuracy="high") as exact:
+    reference = exact(...)
 ```
 
 Models with different layer counts can use zero-thickness solid padding.
@@ -105,8 +117,8 @@ velocity.flush()
 trace_flags.flush()
 ```
 
-Inspect `status`, `trace_flags`, `search_level` and `root_count` alongside the
-velocities. A requested mode can be absent without being a numerical failure;
+Inspect `status`, `trace_flags`, `numerical_flags`, `search_level` and
+`root_count` alongside the velocities. A requested mode can be absent without being a numerical failure;
 see [API and diagnostics](docs/API.md) for their meanings.
 
 ### Migrating from 0.1.0
@@ -143,8 +155,9 @@ tracked physical branches across periods. Explicit `cmin` or `cmax` crops the
 search spectrum, so mode 0 is the first detected root inside that interval, not
 necessarily the model's fundamental mode.
 
-`status`, `trace_flags`, `search_level` and `root_count` describe the numerical
-search. A zero flag or agreement between sampling levels describes the completed
+`status`, `trace_flags`, `numerical_flags`, `search_level` and `root_count`
+describe the numerical search. `numerical_flags` excludes the user-cropping
+`TRACE_RANGE_TRUNCATED` bit. A zero flag or agreement between sampling levels describes the completed
 checks, not a mathematical guarantee that every physical root was found. See
 [API and diagnostics](docs/API.md).
 
@@ -154,6 +167,11 @@ Measured on 2026-10-28 with disba 0.7.0 and QEDispInv `ed1b5dd`, using the same
 solid-Rayleigh inputs on dual-socket Xeon Gold 6430 CPUs and one NVIDIA A800.
 Accuracy uses all 171 models / 6083 period traces with four requested modes.
 The independent judge is a stable two-grid FP64 reference (32769/65537 nodes).
+For 0.3.0, `high` retains the 2.586418e-07 maximum; `balanced` and `fast`
+measure 2.624469477296998e-07, each with zero wrong/missing/extra/unresolved
+cells. On the complete Base workload, `balanced` is 2.44x faster in solver time
+(2.38x end to end) with zero missing/extra/unresolved cells and maximum common
+error 2.8042e-7 km/s.
 
 | Solver | Wrong | Missing | Extra | Exceptions / unresolved | Max common abs error (km/s) |
 |---|---:|---:|---:|---:|---:|
@@ -207,7 +225,7 @@ as a claim of superiority on every model.
 
 ```sh
 python examples/make_input.py input.npz
-modisp forward input.npz --output output.npz --backend auto --nmodes 3
+modisp forward input.npz --output output.npz --backend auto --nmodes 3 --accuracy balanced
 ```
 
 The CLI reads NPZ arrays and writes phase velocities together with numerical

@@ -27,7 +27,7 @@ def test_near_roots_and_precision_boundaries(name,period):
     model=next(m for m in md.CANONICAL_MODELS if m.name==name)
     a=scan(model,period,nc=65537);b=scan(model,period)
     np.testing.assert_allclose(a[:7],b[:7],atol=1e-10,rtol=1e-10)
-    with md.Solver(backend=BACKEND,cmin=.1) as s:out=s(model.thickness,model.vp,model.vs,model.rho,[period],nmodes=5)
+    with md.Solver(backend=BACKEND,cmin=.1,accuracy='high') as s:out=s(model.thickness,model.vp,model.vs,model.rho,[period],nmodes=5)
     actual=out.phase_velocity[0,:,0]
     if np.any(out.trace_flags&4):assert np.isnan(actual).all()
     else:
@@ -46,7 +46,7 @@ def test_normalization_preserves_roots_not_amplitudes():
 def test_periods_remain_fp64_in_refinement():
     m=md.CANONICAL_MODELS[1];periods=np.array([5.,5.*(1.+2e-8)])
     assert np.float32(periods[0])==np.float32(periods[1])
-    with md.Solver(backend=BACKEND,c_tol_rel=1e-11) as s:
+    with md.Solver(backend=BACKEND,c_tol_rel=1e-11,accuracy="high") as s:
         out=s(m.thickness,m.vp,m.vs,m.rho,periods,nmodes=1)
     assert abs(np.diff(out.phase_velocity[0,0])[0])>1e-10
 
@@ -56,6 +56,6 @@ def test_precision_probe_does_not_change_production_precision():
     fp32=native.secular_grid(*fields,[5.661625992822728],.2,2.,8192,precision='float32')
     fp64=native.secular_grid(*fields,[5.661625992822728],.2,2.,8192)
     assert np.any(fp32!=fp64)
-    with md.Solver(backend=BACKEND) as s:
+    with md.Solver(backend=BACKEND,accuracy='high') as s:
         s(*fields,[5.661625992822728],nmodes=3)
         assert s.kernel_report()['precision']=='float64'

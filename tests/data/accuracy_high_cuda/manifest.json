@@ -1,0 +1,129 @@
+{
+  "modisp_version": "0.2.1",
+  "backend": "cuda",
+  "python": "3.10.12 (main, Aug 31 2026, 10:18:17) [GCC 11.4.0]",
+  "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+  "numpy": "2.2.6",
+  "cpu_module": "_cpu.cpython-310-x86_64-linux-gnu.so",
+  "cpu_sha256": "ca229d942053e3e1e9d17a28457c14e52a79d6dcdb0ad3ab0c85ae9653e60f8b",
+  "cuda_module": "_cuda.cpython-310-x86_64-linux-gnu.so",
+  "cuda_device": "NVIDIA A800 80GB PCIe sm_80",
+  "cases": [
+    {
+      "file": "00_random8.npz",
+      "name": "random8",
+      "nmodes": 5,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.4,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "2a531b062c997448a0cc49a725b25e15e7d28dd36451c60b58866c7d6d875f3e"
+    },
+    {
+      "file": "01_m04_lvz.npz",
+      "name": "m04_lvz",
+      "nmodes": 4,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "8cda57034b8eab70b6b46a592c3d3ff4096ae26c381a6aa629fff3ec4ac6bbd3"
+    },
+    {
+      "file": "02_m06_multi_reversal.npz",
+      "name": "m06_multi_reversal",
+      "nmodes": 4,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "c8211f2b0a269fbbcaabdba821b5e5bff2b5063b9005d0c666a9cbf2c5e3ec16"
+    },
+    {
+      "file": "03_m08_near_kissing.npz",
+      "name": "m08_near_kissing",
+      "nmodes": 4,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "0ab3223d4440e016e3691b1c78aad94eb51f229166dc3448f6dd7443ec581078"
+    },
+    {
+      "file": "04_water.npz",
+      "name": "water",
+      "nmodes": 4,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "63d4104b5ff3b04ee7fa75f06d9449611e4bd34000d140fa2e23bd6cd36eeb88"
+    },
+    {
+      "file": "05_love_two_layer.npz",
+      "name": "love_two_layer",
+      "nmodes": 4,
+      "wave": "love",
+      "periods": [
+        0.2,
+        0.4,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "25d514f37f566c4f2d8ea071417805ac44d659adf30202bc10f52f84643d1362"
+    },
+    {
+      "file": "06_random70.npz",
+      "name": "random70",
+      "nmodes": 5,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.4,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": 0.2,
+      "cmax": 2.5,
+      "sha256": "c69dba19847be241d684d2d46a0978584a92627ea63b2fa8ecbbe29e7923f5f8"
+    }
+  ],
+  "cuda_sha256": "31b2c5ebaf199511e01d479ca0b7b3ed9d05e972d480471c044567894105cd6f"
+}

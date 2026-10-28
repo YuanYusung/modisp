@@ -6,7 +6,7 @@ P–SV/Scholte 型根及 Love 多模态相速度。
 ## 安装
 
 ```sh
-python -m pip install /path/to/modisp-0.2.1-<匹配标签>.whl
+python -m pip install /path/to/modisp-0.3.0-<匹配标签>.whl
 modisp doctor
 ```
 
@@ -14,7 +14,7 @@ CPU 使用不需要 CUDA。有 NVIDIA GPU 时，再安装版本完全一致的
 `modisp_cuda12` wheel。离线安装：
 
 ```sh
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.2.1
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.3.0
 ```
 
 从源码安装使用 `python -m pip install <CPU源码包.tar.gz>`，需要 C++17
@@ -74,6 +74,26 @@ with Solver(backend="auto", threads=8, chunk_size=100) as solver:
 固体层。`auto` 在匹配插件及设备可用时用 CUDA，否则用 CPU 并记录原因。
 显式 `cuda` 不可用时报错，数值失败不会切换后端。同一 Solver 不可并发调用；
 `close()` 或 `with` 释放资源。
+
+## 精度档位
+
+0.3.0 默认 `accuracy="balanced"`，在保持 FP64 久期函数与根精修的前提下减少
+采样和独立验证：
+
+```python
+with Solver(backend="auto", accuracy="balanced") as solver:   # 默认
+    fast = solver(thickness, vp, vs, rho, periods, nmodes=5)
+with Solver(backend="auto", accuracy="high") as solver:       # 0.2.1 逐位
+    exact = solver(thickness, vp, vs, rho, periods, nmodes=5)
+with Solver(backend="auto", accuracy="fast") as solver:       # 显式快速档
+    quick = solver(thickness, vp, vs, rho, periods, nmodes=5)
+```
+
+`high` 与 0.2.1 逐位一致；`balanced` 在真实 ModePhys 1,024 模型上 CUDA 约
+2.4×、CPU 约 2.8×，11 套独立参考仍为 0 wrong/missing/extra/unresolved。
+`fast` 是显式 opt-in，误差界大于 balanced。`search_level` 1/2/3 表示自适应
+层级接受，4/5 表示粗/细 dense 回退接受。`numerical_flags` 排除用户裁剪位
+`TRACE_RANGE_TRUNCATED`，便于区分裁剪与数值失败。
 
 ## 诊断和编号
 

@@ -56,7 +56,7 @@ def test_mixed_dry_wet_batch_and_explicit_ranges():
 @pytest.mark.parametrize('path',sorted((Path(__file__).parent/'data').glob('B10000_*.npz')),ids=lambda x:x.stem)
 def test_previously_unresolved_benchmark_cases(path):
     f=np.load(path)
-    with md.Solver(backend=BACKEND,cmin=.2) as s:
+    with md.Solver(backend=BACKEND,cmin=.2,accuracy='high') as s:
         out=s(**{k:f[k] for k in FIELDS},periods=f['periods'],nmodes=3)
     ref=f['reference'][0,:3];x=out.phase_velocity[0,:,0]
     if np.any(out.trace_flags&4):
@@ -85,10 +85,10 @@ def test_unavailable_and_version_checks(monkeypatch):
 
 
 def test_budget_and_failed_work_diagnostics():
-    with md.Solver(backend=BACKEND,workspace_bytes=1) as s:
+    with md.Solver(backend=BACKEND,workspace_bytes=1,accuracy='high') as s:
         with pytest.raises(MemoryError,match='workspace'):s([0.],[6.],[3.5],[2.7],[1.])
     # Extreme optical thickness exceeds the explicit search workload ceiling.
-    with md.Solver(backend=BACKEND) as s:
+    with md.Solver(backend=BACKEND,accuracy='high') as s:
         out=s([1e6,0.],[2.,6.],[.8,3.5],[2.,2.7],[.01],nmodes=2)
     assert np.all(out.trace_flags&md.TRACE_WORKSPACE_LIMIT)
     assert np.all(out.trace_flags&md.TRACE_SEARCH_UNCONVERGED)
@@ -140,7 +140,7 @@ def test_uniform_legacy_facade_compatibility():
 
 
 def test_finite_unrepresentable_model_is_flagged():
-    with md.Solver(backend=BACKEND) as s:
+    with md.Solver(backend=BACKEND,accuracy='high') as s:
         out=s([1e200,0.],[1e200,2e200],[5e199,1e200],[1e200,1e200],[1.],nmodes=3)
     assert np.isnan(out.phase_velocity).all()
     assert out.trace_flags[0,0]&md.TRACE_SEARCH_UNCONVERGED
@@ -160,7 +160,7 @@ def test_empty_cropped_window_has_explicit_state(wave):
 def test_independent_witness_regressions(path):
     f=np.load(path)
     assert bool(f['reference_stable'])
-    with md.Solver(backend=BACKEND,cmin=.2) as s:
+    with md.Solver(backend=BACKEND,cmin=.2,accuracy='high') as s:
         out=s(**{k:f[k] for k in FIELDS},periods=f['periods'],nmodes=3)
     # 0.2.0 resolved these seven witnesses on both CPU and CUDA. Preserve that
     # acceptance boundary: returning all UNRESOLVED must not pass a regression.

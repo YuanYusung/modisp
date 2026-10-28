@@ -226,11 +226,17 @@ def compare(output, reference, stable, unresolved=0, unresolved_mask=None):
     return metrics
 
 
-def run_modisp_accuracy(suite, indices, backend, threads=1):
+def run_modisp_accuracy(suite, indices, backend, threads=1, accuracy=None):
+    import inspect
     import modisp
 
     selected = take_models(suite, indices)
-    with modisp.Solver(backend=backend, threads=threads, cmin=cmin_for(suite)) as solver:
+    options = dict(backend=backend, threads=threads, cmin=cmin_for(suite))
+    if accuracy is not None:
+        if "accuracy" not in inspect.signature(modisp.Solver).parameters:
+            raise RuntimeError("this modisp installation does not support accuracy presets")
+        options["accuracy"] = accuracy
+    with modisp.Solver(**options) as solver:
         result = solver(
             *(selected[key] for key in FIELDS),
             suite["data"]["periods"], nmodes=NMODES, wave="rayleigh",
@@ -373,7 +379,7 @@ def accuracy(args, suites, environment):
             if solver_name.startswith("modisp"):
                 backend = solver_name.split("-")[1]
                 output, status, unresolved_mask = run_modisp_accuracy(
-                    suite, indices, backend, args.threads
+                    suite, indices, backend, args.threads, getattr(args, "accuracy", None)
                 )
                 metrics = compare(
                     output, reference, stable, unresolved_mask=unresolved_mask
@@ -817,6 +823,8 @@ def parse_args():
     accuracy_parser = subparsers.add_parser("accuracy", parents=[common], help="compare complete outputs")
     accuracy_parser.add_argument("--solvers", nargs="+", choices=("modisp-cpu", "modisp-cuda", "disba", "qed"), default=["modisp-cpu", "modisp-cuda", "disba", "qed"])
     accuracy_parser.add_argument("--threads", type=int, default=1)
+    accuracy_parser.add_argument("--accuracy", choices=("high", "balanced", "fast"), default=None,
+                                 help="modisp accuracy preset (default: installation default)")
     accuracy_parser.add_argument("--require-clean-modisp", action="store_true")
     performance_parser = subparsers.add_parser(
         "performance", parents=[common], help="measure fixed seed batches"

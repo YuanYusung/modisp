@@ -1,5 +1,58 @@
 # Performance measurement and ModePhys workflow
 
+## 0.3.0 accuracy presets
+
+Version 0.3.0 adds `accuracy="high"|"balanced"|"fast"`. The default is
+`balanced`; `high` reproduces the 0.2.1 search schedule and outputs bit for bit.
+Every preset keeps the FP64 secular function, FP64 bracket refinement, root
+ordering and diagnostics. The presets only change adaptive sampling, the
+independent guarded-verification schedule and the first dense fallback floor.
+Traces that cannot prove a safe root spacing fall back to the exact `high` dense
+schedule, so the coarse floor cannot make an extreme close-root trace newly
+unresolved.
+
+Measured on 2026-10-28 on the same host as 0.2.1, with 1,024 ModePhys models,
+70 layers, 100 periods, five Rayleigh modes and `workspace_bytes=1 GiB`. Calls
+are interleaved, warmup and first call are separate, and each value is the median
+of five steady samples. All comparisons had zero wrong, missing, extra or
+newly-unresolved results.
+
+| Workload | 0.2.1 high | 0.3.0 balanced | Speed-up |
+|---|---:|---:|---:|
+| A800 CUDA, 1,024 models | 7.4857 s | 3.1352 s | 2.39x |
+| 64-thread CPU, 1,024 models | 31.6240 s | 11.5768 s | 2.73x |
+| A800 CUDA, `accuracy="high"` | 7.4857 s | 7.49 s | 1.00x (bitwise) |
+| A800 CUDA, full Base 29,379 models, solver | 207.92 s | 85.27 s | 2.44x |
+| A800 CUDA, full Base 29,379 models, end to end | 211.46 s | 88.69 s | 2.38x |
+| A800 CUDA, Aug 10,000-model stress set | 74.11 s | 29.84 s | 2.48x |
+
+The balanced 1,024-model run used 144,862,574 evaluations instead of
+435,649,857; 96,026 traces accepted early, 86,396 skipped the guarded family,
+and 3,578 accepted the coarse dense level. Maximum common absolute difference
+from 0.2.1 was 2.1494e-7 km/s; there were no differences above 1e-6 km/s. Full
+Base and the Aug 10,000 stress set had zero wrong, missing, extra or
+newly-unresolved cells and maximum 2.8042e-7 and 2.9777e-7 km/s respectively;
+the five Aug dense-root differences found in the first candidate were fixed by
+requiring a four-cell dense safety margin and escalating to the high dense
+schedule.
+
+The 11 independent FP64 suites (171 models, 6,083 period traces) remain clean:
+
+| Preset | Wrong | Missing | Extra | Unresolved | Max common abs error (km/s) |
+|---|---:|---:|---:|---:|---:|
+| high | 0 | 0 | 0 | 0 | 2.586418e-07 |
+| balanced | 0 | 0 | 0 | 0 | 2.624469477296998e-07 |
+| fast | 0 | 0 | 0 | 0 | 2.624469477296998e-07 |
+
+The design note's 12–15x estimate is not claimed: the measured per-trace FP64
+evaluation count and dense fallback floor do not support it, and this release
+keeps the physical reference acceptance rather than reproducing the old coarse
+scan's dense-root errors. `fast` is an explicit opt-in with a larger error bound;
+`balanced` is the production default.
+
+
+## 0.2.1 history
+
 Version 0.2.1 preserves the FP64 recurrence, search densities, shifted/guarded
 verification, dense fallback, root ordering and diagnostics from 0.2.0. It does
 not add a Numba backend or enable fast math. CPU work remains in compiled C++.
@@ -49,7 +102,10 @@ with Solver(backend="cuda", workspace_bytes=1024**3, profile=True) as solver:
 
 `profile=False` is the default. Profiled calls are for diagnosis and must be
 separate from reported steady-state performance: detailed CPU clocks and CUDA
-events add overhead. Timings are seconds; CUDA stages are event durations on
+events add overhead. Since 0.3.0, unprofiled `stats()` also exposes
+`accuracy`, `period_threshold`, `sampling_capacity`, `early_accepts`,
+`verification_skipped`, `dense_coarse_accepted`, `dense_fine_escalated` and
+`trough_risks`. The `high` preset reports zero early/skip/coarse counters. Timings are seconds; CUDA stages are event durations on
 the solver's stream. CPU fields ending in `_worker` sum worker durations and
 overlap each other; they must not be added to wall time. `solver_total` includes
 validation, bounds, native execution and result packaging. The uniform legacy

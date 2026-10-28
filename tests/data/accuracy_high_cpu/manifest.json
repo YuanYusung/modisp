@@ -1,0 +1,128 @@
+{
+  "modisp_version": "0.2.1",
+  "backend": "cpu",
+  "python": "3.12.12 | packaged by conda-forge | (main, Oct 22 2025, 23:34:53) [Clang 19.1.7 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "numpy": "2.5.4",
+  "cpu_module": "_cpu.cpython-312-darwin.so",
+  "cpu_sha256": "38fa78a1fe6301d3476cf9c2d942c1434049bf39f1b9ef4f434dbc92f4d78901",
+  "cuda_module": null,
+  "cuda_device": null,
+  "cases": [
+    {
+      "file": "00_random8.npz",
+      "name": "random8",
+      "nmodes": 5,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.4,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "51d9855b609bbca22c0ca1debaf6bcbb38981fcca777269fcfd9efb6b0fcc025"
+    },
+    {
+      "file": "01_m04_lvz.npz",
+      "name": "m04_lvz",
+      "nmodes": 4,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "5bed209eda57ac6dd5c9df8c94af24b0031aa3b52b2a4b033e2e57f82ff3af18"
+    },
+    {
+      "file": "02_m06_multi_reversal.npz",
+      "name": "m06_multi_reversal",
+      "nmodes": 4,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "9929f6da40868d832d3f4aece43382be082b63ca319c6371b5e2a023b7c77978"
+    },
+    {
+      "file": "03_m08_near_kissing.npz",
+      "name": "m08_near_kissing",
+      "nmodes": 4,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "04ed1c0878e2e86834916247f8d655e7b9b12302006282171f4c9800b75586be"
+    },
+    {
+      "file": "04_water.npz",
+      "name": "water",
+      "nmodes": 4,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "dd99faf8dc06dbdef61249b1ece358fb8be95ecc3ab1df4aaec1bf29f8d5db4a"
+    },
+    {
+      "file": "05_love_two_layer.npz",
+      "name": "love_two_layer",
+      "nmodes": 4,
+      "wave": "love",
+      "periods": [
+        0.2,
+        0.4,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": null,
+      "cmax": null,
+      "sha256": "044d7cb9af45b0ce12e0d8570815a8379d240540663468803ba9f00fb2bddcf8"
+    },
+    {
+      "file": "06_random70.npz",
+      "name": "random70",
+      "nmodes": 5,
+      "wave": "rayleigh",
+      "periods": [
+        0.2,
+        0.4,
+        0.63,
+        1.0,
+        2.0,
+        10.0
+      ],
+      "cmin": 0.2,
+      "cmax": 2.5,
+      "sha256": "6e20d9e71651b0894d34dc9cae60768c175312b6ea0efeab1154afa69b2bf8aa"
+    }
+  ]
+}

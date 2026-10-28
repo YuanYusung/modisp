@@ -211,6 +211,12 @@ def make_solver(md, args):
         options["profile"] = args.profile
     elif args.profile:
         raise ValueError("this installation does not implement profile=True")
+    accuracy = getattr(args, "accuracy", None)
+    if accuracy is not None and "accuracy" in inspect.signature(md.Solver).parameters:
+        options["accuracy"] = accuracy
+    # A pre-0.3.0 installation has only its exact default path; passing a
+    # preset to it is intentionally ignored so the same A/B command can pair
+    # the old and new packages.
     return md.Solver(**options)
 
 
@@ -253,7 +259,7 @@ def run(args):
                   models=n, periods=periods.tolist(), nmodes=5, convention="A",
                   backend=args.backend, threads=args.threads, workspace_bytes=args.workspace_bytes,
                   chunk=args.chunk, native_chunk=args.native_chunk, profile=args.profile,
-                  environment=env)
+                  accuracy=getattr(args, "accuracy", None), environment=env)
     identity = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     out = args.output.resolve()
     checkpoint = out / "checkpoint.json"
@@ -335,7 +341,9 @@ def compare(args):
     b = {k: np.load(args.after / f"{k}.npy", mmap_mode="r") for k in RESULTS}
     if a["phase_velocity"].shape != b["phase_velocity"].shape:
         raise ValueError("result shapes differ")
-    report = dict(wrong=0, missing=0, extra=0, newly_unresolved=0, max_common_error=0., diagnostics_changed={k: 0 for k in RESULTS if k != "phase_velocity"})
+    report = dict(wrong=0, missing=0, extra=0, newly_unresolved=0, max_common_error=0.,
+                  finite_common=0, error_counts_gt={str(t): 0 for t in (1e-6, 1e-5, 1e-4, 1e-3)},
+                  diagnostics_changed={k: 0 for k in RESULTS if k != "phase_velocity"})
     for start in range(0, len(a["phase_velocity"]), 512):
         end = start + 512
         x, y = a["phase_velocity"][start:end], b["phase_velocity"][start:end]
@@ -347,11 +355,15 @@ def compare(args):
         report["extra"] += int(np.count_nonzero(~fx & fy))
         if err.size:
             report["max_common_error"] = max(report["max_common_error"], float(err.max()))
+        report["finite_common"] += int(np.count_nonzero(common))
+        for threshold in report["error_counts_gt"]:
+            report["error_counts_gt"][threshold] += int(np.count_nonzero(err > float(threshold)))
         report["newly_unresolved"] += int(np.count_nonzero(((b["trace_flags"][start:end] & 4) != 0) & ((a["trace_flags"][start:end] & 4) == 0)))
         for name in report["diagnostics_changed"]:
             report["diagnostics_changed"][name] += int(np.count_nonzero(a[name][start:end] != b[name][start:end]))
     report["reference_kind"] = "before/after regression; not an independent physical reference"
-    report["passed"] = not any(report[k] for k in ("wrong", "missing", "extra", "newly_unresolved")) and not any(report["diagnostics_changed"].values())
+    report["exact_equal"] = not any(report[k] for k in ("wrong", "missing", "extra", "newly_unresolved")) and not any(report["diagnostics_changed"].values())
+    report["passed"] = report["exact_equal"] or bool(getattr(args, "allow_accuracy_change", False))
     atomic_json(args.output, report)
     print(json.dumps(report))
     if not report["passed"]:
@@ -406,6 +418,7 @@ def main():
     p = sub.add_parser("compare")
     for flag in ("before", "after", "output"):
         p.add_argument(f"--{flag}", type=Path, required=True)
+    p.add_argument("--allow-accuracy-change", action="store_true")
     for command in ("run", "bench"):
         p = sub.add_parser(command)
         p.add_argument("--input", type=Path, required=True)
@@ -417,6 +430,7 @@ def main():
         p.add_argument("--native-chunk", type=int)
         p.add_argument("--models", type=int, default=0)
         p.add_argument("--profile", action="store_true")
+        p.add_argument("--accuracy", choices=("high", "balanced", "fast"))
         p.add_argument("--guard-gpu", action="store_true", help="reject observed competing GPU compute")
         if command == "run":
             p.add_argument("--chunk", type=int, default=1024)

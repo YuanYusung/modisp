@@ -330,6 +330,85 @@
         "dense_fine_escalated": 0,
         "evaluations": 144511256
       }
+    },
+    "cpu_fast": {
+      "speedup": 2.735771758055453,
+      "passed": true,
+      "exact_equal": false,
+      "steady_median_seconds": {
+        "after": 11.610095389187336,
+        "before": 31.762571074068546
+      },
+      "samples_seconds": {
+        "after": [
+          11.610095389187336,
+          11.565337143838406,
+          11.746165968477726,
+          11.59505721181631,
+          11.773748740553856
+        ],
+        "before": [
+          31.684205174446106,
+          31.737170286476612,
+          32.12878631055355,
+          31.817211627960205,
+          31.762571074068546
+        ]
+      },
+      "regression": {
+        "first": {
+          "diagnostics_changed": {
+            "mode_mask": 5,
+            "root_count": 1,
+            "search_bounds": 0,
+            "search_level": 89065,
+            "status": 5,
+            "trace_flags": 1515
+          },
+          "error_counts_gt": {
+            "0.0001": 0,
+            "0.001": 0,
+            "1e-05": 0,
+            "1e-06": 0
+          },
+          "extra": 5,
+          "finite_common": 376617,
+          "max_common_abs_error": 2.2579628344843172e-07,
+          "missing": 0,
+          "newly_unresolved": 0,
+          "wrong": 0
+        },
+        "last": {
+          "diagnostics_changed": {
+            "mode_mask": 5,
+            "root_count": 1,
+            "search_bounds": 0,
+            "search_level": 89065,
+            "status": 5,
+            "trace_flags": 1515
+          },
+          "error_counts_gt": {
+            "0.0001": 0,
+            "0.001": 0,
+            "1e-05": 0,
+            "1e-06": 0
+          },
+          "extra": 5,
+          "finite_common": 376617,
+          "max_common_abs_error": 2.2579628344843172e-07,
+          "missing": 0,
+          "newly_unresolved": 0,
+          "wrong": 0
+        }
+      },
+      "after_stats": {
+        "accuracy": "fast",
+        "early_accepts": 96270,
+        "verification_skipped": 86454,
+        "dense_coarse_accepted": 2944,
+        "dense_fine_escalated": 1111,
+        "evaluations": 144541872
+      }
     }
   },
   "full_base": {

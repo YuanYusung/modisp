@@ -43,9 +43,10 @@ their tests validates honest failure signaling; it does not mean those physical
 roots were recovered under the high schedule. Other tests explicitly reject an
 all-UNRESOLVED regression.
 
-`fast` measured 2.45x on the 1,024-model CUDA task, 2.53x solver/2.47x
-end-to-end on complete Base, and 2.55x on Aug 10,000. It retained zero
-wrong/missing/extra/newly-unresolved cells on all three, with maximum common
+`fast` measured 2.45x on the 1,024-model CUDA task, 2.74x on the 1,024-model
+64-thread CPU task, 2.53x solver/2.47x end-to-end on complete Base, and 2.55x on
+Aug 10,000. It retained zero
+wrong/missing/extra/newly-unresolved cells on all four, with maximum common
 errors 2.2580e-7, 2.8042e-7 and 2.9777e-7 km/s. The earlier 16,384-point fine
 dense floor produced six shifted close-root Aug cells (maximum 0.088 km/s); the
 shipped fast preset uses 32,768 points and the four-cell dense safety margin.

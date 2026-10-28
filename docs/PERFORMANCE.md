@@ -43,13 +43,16 @@ aligned with `balanced`:
 | Workload | 0.2.1 high | 0.3.0 fast | Speed-up |
 |---|---:|---:|---:|
 | A800 CUDA, 1,024 models | 7.4912 s | 3.0545 s | 2.45x |
+| 64-thread CPU, 1,024 models | 31.7626 s | 11.6101 s | 2.74x |
 | A800 CUDA, full Base, solver | 207.92 s | 82.31 s | 2.53x |
 | A800 CUDA, full Base, end to end | 211.46 s | 85.66 s | 2.47x |
 | A800 CUDA, Aug 10,000 stress set | 74.11 s | 29.03 s | 2.55x |
 
 Fast retained zero wrong, missing, extra and newly-unresolved cells on the
-1,024-model set, complete Base and Aug 10,000 stress set; maximum common errors
-were 2.2580e-7, 2.8042e-7 and 2.9777e-7 km/s respectively. The earlier fast
+1,024-model CUDA and CPU comparisons, complete Base and Aug 10,000 stress set;
+maximum common errors were 2.2580e-7 (1,024), 2.8042e-7 (Base) and 2.9777e-7
+(Aug 10,000) km/s. The CPU comparison had five extra finite cells, no missing
+cells. The earlier fast
 candidate used a 16,384-point fine floor and produced six shifted close-root
 cells in Aug 10,000 (maximum 0.088 km/s); that configuration is not shipped.
 

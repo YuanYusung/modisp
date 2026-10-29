@@ -11,7 +11,7 @@ overhead. On the documented fixed-node CPU workload it improved function
 evaluation 1.03–1.19×; the full 32-model/100-period/5-mode high-preset CPU run
 improved 1.07–1.10×. On an A800, 1,024 models at the same preset improved from
 6.128 s to 4.602 s (1.33×). Root sets were equal in both comparisons. The
-default `secular="dunkin"` path is unchanged. Protocol and caveats are in
+CPU default is `secular="dunkin"`; CUDA defaults to `secular="fast"`. Protocol and caveats are in
 [the 0.3.2 report](SECULAR_FAST_0_3_2.md).
 
 

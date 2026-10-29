@@ -90,8 +90,9 @@ with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solve
 
 `close_root_rtol=0.005` 表示 0.5%，可配置。`high` 逐根搜索，不按此阈值合并。
 0.3.2 默认 `search_strategy="shape_adaptive"`，用局部五点积分一致性决定细分。
-实验性的 `secular="fast"` 保持相同 FP64 Dunkin 代数，只优化标量运算；默认
-`secular="dunkin"` 不变。固定节点 CPU 测量约 1.03–1.19× 函数加速、1.07–1.10×
+`secular=None` 按实际后端选择：CUDA 默认 `fast`，CPU 默认 `dunkin`；
+`backend="auto"` 回退 CPU 时也采用 `dunkin`。legacy `uniform` 默认仍用 `dunkin`。
+显式 `secular="fast"` 或 `"dunkin"` 可覆盖自适应求解器的默认选择。固定节点 CPU 测量约 1.03–1.19× 函数加速、1.07–1.10×
 求解器加速，A800 1,024 模型约 1.33×，详见 [0.3.2 说明](SECULAR_FAST_0_3_2.md)。
 `sampling_rtol` 三档默认 `1e-3`／`1e-2`／`5e-2`，与速度精化容差和近根尺度分别管理。
 需要复现 0.3.0 时显式选择 `search_strategy="qe_adaptive"`。

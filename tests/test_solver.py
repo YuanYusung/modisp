@@ -1,17 +1,19 @@
-"""Accuracy presets: default balanced, high bitwise baseline, fast opt-in."""
+#!/Users/yusong/miniforge3/bin/python
+"""Search presets, shape/fast evaluators, frozen fixtures and near-root regressions."""
 import os
 import sys
 from pathlib import Path
-
 import numpy as np
 import pytest
-
 import modisp as md
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
+BACKEND=os.environ.get("MODISP_TEST_BACKEND","cpu")
 
-BACKEND = os.environ.get("MODISP_TEST_BACKEND", "cpu")
+
 FIELDS = ("phase_velocity", "mode_mask", "status", "trace_flags",
           "search_level", "root_count", "search_bounds")
+
+
 MODEL_FIELDS = ("thickness", "vp", "vs", "rho")
 
 
@@ -57,7 +59,7 @@ def _fixture_paths():
 @pytest.mark.parametrize("accuracy", ["high"])
 def test_presets_match_0_2_1_bitwise(path, accuracy):
     f = np.load(path, allow_pickle=True)
-    options = dict(backend=BACKEND, threads=4, accuracy=accuracy,search_strategy="qe_adaptive")
+    options = dict(backend=BACKEND, threads=4, accuracy=accuracy,search_strategy="qe_adaptive",secular="dunkin")
     if BACKEND == "cuda":
         options["workspace_bytes"] = 1024 ** 3
     if np.isfinite(f["cmin"]):
@@ -77,6 +79,14 @@ def test_presets_match_0_2_1_bitwise(path, accuracy):
             np.testing.assert_array_equal(actual, reference)
 
 
+    with md.Solver(**dict(options,secular="fast")) as solver:
+        fast=solver(f["thickness"],f["vp"],f["vs"],f["rho"],f["periods"],
+                    nmodes=int(f["nmodes"]),wave=str(f["wave"]))
+    np.testing.assert_array_equal(fast.mode_mask,out.mode_mask)
+    np.testing.assert_array_equal(fast.root_count,out.root_count)
+    np.testing.assert_allclose(fast.phase_velocity,out.phase_velocity,atol=2e-7,rtol=1e-9)
+
+
 def _cases():
     water = dict(thickness=[.025, 0.], vp=[1.5, 6.], vs=[0., 3.5], rho=[1.02, 2.7])
     random = md.random_model_batch(3, 8, seed=20261028)
@@ -94,9 +104,9 @@ def _cases():
 def test_presets_ordinary_roots_and_flagged_clusters(accuracy,error_budget):
     for name,model,wave,nmodes,periods in _cases():
         with md.Solver(backend=BACKEND,accuracy="high",threads=2) as solver:
-            expected=solver(**model,periods=periods,nmodes=nmodes)
+            expected=solver(**model,periods=periods,nmodes=nmodes,wave=wave)
         with md.Solver(backend=BACKEND,accuracy=accuracy,threads=2) as solver:
-            actual=solver(**model,periods=periods,nmodes=nmodes)
+            actual=solver(**model,periods=periods,nmodes=nmodes,wave=wave)
         from tolerant_metrics import compare
         result=compare(actual.phase_velocity,expected.phase_velocity,actual.trace_flags,.005,error_budget,expected.trace_flags)
         assert result['accepted'],(name,result)
@@ -145,15 +155,6 @@ def test_invalid_and_uniform_accuracy():
         with pytest.raises(NotImplementedError):
             solver([0.], [6.], [3.5], [2.7], [1.])
 
-
-def test_balanced_chunking_and_reuse_deterministic():
-    batch = md.random_model_batch(5, 7, seed=654)
-    periods = np.array([.4, 1., 2.])
-    with md.Solver(backend=BACKEND, accuracy="balanced", threads=2) as one:
-        first = one(**batch, periods=periods, nmodes=3)
-    with md.Solver(backend=BACKEND, accuracy="balanced", threads=3, chunk_size=2) as many:
-        chunked = many(**batch, periods=periods, nmodes=3)
-    assert_same(first, chunked)
 
 def test_functional_accuracy_conflict():
     model = np.array([[.2, 2., .8, 2.], [0., 5., 2.8, 2.6]])
@@ -275,3 +276,202 @@ def test_isolated_love_roots_are_not_waived_as_close_clusters(accuracy,budget):
     with md.Solver(backend=BACKEND,accuracy=accuracy,threads=1,cmin=.1) as solver:
         out=solver(h,vp,vs,rho,[period],nmodes=5,wave='love')
     np.testing.assert_allclose(out.phase_velocity[0,:,0],reference,rtol=budget,atol=1e-7)
+
+
+@pytest.mark.parametrize('accuracy,tolerance',[('high',1e-3),('balanced',1e-2),('fast',5e-2)])
+def test_shape_default_and_sampling_metadata(accuracy,tolerance):
+    if BACKEND=='cuda':
+        import modisp_cuda
+        assert modisp_cuda.__version__==md.__version__
+    with md.Solver(backend=BACKEND,accuracy=accuracy,threads=1) as solver:
+        result=solver([.2,0.],[2.,5.],[.8,2.8],[2.,2.6],[.5,1.,2.],nmodes=3)
+        assert solver.search_strategy=='shape_adaptive'
+        assert result.search_strategy=='shape_adaptive'
+        assert result.sampling_rtol==tolerance
+        assert solver.stats()['sampling_rtol']==tolerance
+        assert solver.stats()['shape_accepted']>0
+        assert solver.stats()['workspace_bytes']<=solver.workspace_bytes
+        assert (solver.stats()['shape_queue_reserved_bytes']>0)==(BACKEND=='cuda')
+        assert solver.stats()['velocity_step_rtol'] is None
+        if accuracy!='high':assert np.all(result.mode_index_uncertain)
+
+
+@pytest.mark.parametrize('value',[0.,-1.,1.01,np.nan,np.inf,1j,[.01]])
+def test_sampling_tolerance_validation(value):
+    with pytest.raises(ValueError,match='sampling_rtol'):md.Solver(sampling_rtol=value)
+
+
+def test_sampling_override_and_legacy_separation():
+    with md.Solver(backend=BACKEND,accuracy='fast',sampling_rtol=.003) as solver:
+        result=solver([0.],[6.],[3.5],[2.7],[1.],nmodes=1)
+        assert result.sampling_rtol==.003
+        assert solver.c_tol_rel==1e-4
+        assert solver.close_root_rtol==.005
+    with pytest.raises(ValueError,match='sampling_rtol'):
+        md.Solver(search_strategy='qe_adaptive',sampling_rtol=.01)
+
+
+@pytest.mark.parametrize('wave',[0,1])
+@pytest.mark.parametrize('water',[False,True])
+def test_search_feature_preserves_signed_original_function(wave,water):
+    model=np.array([[1.,3.,1.5,2.],[0.,6.,3.5,2.7]])
+    if water:model=np.vstack([[.1,1.5,0.,1.02],model])
+    c=np.linspace(.3,3.49,173)
+    original=md._cpu.secular(*model.T,1.3,c,wave)
+    signed,feature=md._cpu.secular_shape(*model.T,1.3,c,wave)
+    np.testing.assert_array_equal(original.view(np.uint64),signed.view(np.uint64))
+    assert np.isfinite(feature).all()
+    nonzero=signed!=0
+    np.testing.assert_array_equal(np.signbit(signed[nonzero]),np.signbit(feature[nonzero]))
+
+
+PAPER=np.array([[.01,1.55,.18,1.78],[.01,1.8,.35,1.85],
+                [.02,1.,.12,1.5],[0.,2.,.6,1.93]])
+
+
+@pytest.mark.parametrize('frequency,count,index,pair',[
+    (56.4,28,12,[.17180457878813038,.17184656429811684]),
+    (60.6,30,13,[.17180436959946785,.17181893982553648]),
+    (90.,44,22,[.1812415672074288,.18124177425326074]),
+    (92.5,45,29,[.21422351364294456,.21422374155533766]),
+    (98.3,48,22,[.17180423024080432,.1718666665002732]),
+])
+def test_high_resolves_paper_kissing_pairs(frequency,count,index,pair):
+    with md.Solver(backend=BACKEND,accuracy='high',threads=1,workspace_bytes=1024**3) as solver:
+        result=solver(*PAPER.T,[1/frequency],nmodes=64)
+    roots=result.phase_velocity[0,:,0]
+    assert np.count_nonzero(np.isfinite(roots))==count
+    np.testing.assert_allclose(roots[index:index+2],pair,rtol=1e-7,atol=3e-8)
+    assert roots[index+1]>roots[index]
+
+
+def test_fast_retains_observably_separate_love_pair():
+    # The roots are 0.575% apart, outside the approved 0.5% ambiguity scale.
+    pair=np.array([.296497864967473,.2982134013475273])
+    assert np.diff(pair)[0]>.005*pair[1]
+    with md.Solver(backend=BACKEND,accuracy='fast',threads=1) as solver:
+        result=solver(*PAPER.T,[1/71.6],nmodes=64,wave='love')
+    roots=result.phase_velocity[0,:,0]
+    for c in pair:assert np.any(np.isfinite(roots)&(abs(roots-c)<=2e-4*c))
+
+
+def test_fast_retains_observably_separate_rayleigh_pair():
+    batch=md.random_model_batch(160,6,seed=3491,lvz_prob=1.,h_min=.05,h_max=8.)
+    model={k:v[138] for k,v in batch.items()}
+    pair=np.array([.92300532,.92796816])
+    assert np.diff(pair)[0]>.005*pair[1]
+    with md.Solver(backend=BACKEND,accuracy='fast',cmin=.1,threads=1) as solver:
+        result=solver(**model,periods=[6.046013057825198],nmodes=5)
+    roots=result.phase_velocity[0,:,0]
+    for c in pair:assert np.any(np.isfinite(roots)&(abs(roots-c)<=2e-4*c))
+
+
+@pytest.mark.parametrize('accuracy',['balanced','fast'])
+def test_sampling_finer_and_coarser_keep_analytic_root(accuracy):
+    reference=md.dispersion(np.array([[0.,6.,3.5,2.7]]),[.1,1.,10.],
+                            accuracy='high',backend=BACKEND,nmodes=1).phase_velocity
+    for tolerance in [1e-4,1e-3,1e-2,5e-2]:
+        out=md.dispersion(np.array([[0.,6.,3.5,2.7]]),[.1,1.,10.],accuracy=accuracy,
+                          backend=BACKEND,nmodes=1,sampling_rtol=tolerance)
+        np.testing.assert_allclose(out.phase_velocity,reference,rtol=2e-4,atol=1e-6)
+
+
+@pytest.mark.parametrize('layers',[70,128,210,227,256])
+@pytest.mark.parametrize('wave',['rayleigh','love'])
+def test_shape_padding_across_shared_memory_boundaries(layers,wave):
+    padded=np.tile(PAPER[-1],(layers,1));padded[:,0]=0.;padded[:3]=PAPER[:3]
+    for accuracy in ['high','balanced','fast']:
+        with md.Solver(backend=BACKEND,accuracy=accuracy,threads=1) as solver:
+            small=solver(*PAPER.T,[1/42.,1/71.6],nmodes=5,wave=wave)
+            large=solver(*padded.T,[1/42.,1/71.6],nmodes=5,wave=wave)
+        np.testing.assert_allclose(large.phase_velocity,small.phase_velocity,rtol=2e-6,atol=1e-8,equal_nan=True)
+        np.testing.assert_array_equal(large.status,small.status)
+
+
+def _models():
+    out = []
+    for m in md.CANONICAL_MODELS:
+        out.append((np.asarray(m.thickness, dtype=np.float64).ravel(),
+                    np.asarray(m.vp, dtype=np.float64).ravel(),
+                    np.asarray(m.vs, dtype=np.float64).ravel(),
+                    np.asarray(m.rho, dtype=np.float64).ravel()))
+    # surface acoustic water layer over a solid stack
+    out.append((np.array([.2, 1., 0.]), np.array([1.5, 3., 6.]),
+                np.array([0., 1.5, 3.5]), np.array([1.02, 2., 2.7])))
+    return out
+
+
+def _crossings(c, f):
+    i = np.flatnonzero(np.signbit(f[:-1]) != np.signbit(f[1:]))
+    return c[i]
+
+
+@pytest.mark.parametrize("model_index", range(len(_models())))
+def test_pointwise_and_fixed_node_roots(model_index):
+    h, vp, vs, rho = _models()[model_index]
+    period = 1.0
+    c = np.linspace(max(.05, .1 * vs[-1]), np.nextafter(vs[-1], 0.), 4097)
+    f0 = np.asarray(md._cpu.secular(h, vp, vs, rho, period, c, 0, 0))
+    f1 = np.asarray(md._cpu.secular(h, vp, vs, rho, period, c, 0, 1))
+    assert np.array_equal(np.isfinite(f0), np.isfinite(f1))
+    scale = max(1.0, float(np.max(np.abs(f0))))
+    assert np.max(np.abs(f0 - f1)) <= 2e-10 * scale
+    # Away from a zero, the two functions must have the same sign.
+    away = np.abs(f0) > 1e-9 * scale
+    assert np.array_equal(np.signbit(f0[away]), np.signbit(f1[away]))
+    r0, r1 = _crossings(c, f0), _crossings(c, f1)
+    assert r0.size == r1.size
+    np.testing.assert_allclose(r1, r0, atol=2e-10 * max(1.0, float(np.max(c))), rtol=0)
+
+
+def test_shape_feature_and_love_are_stable():
+    h, vp, vs, rho = _models()[-1]
+    c = np.linspace(.2, np.nextafter(vs[-1], 0.), 2049)
+    f0, g0 = md._cpu.secular_shape(h, vp, vs, rho, 1.0, c, 0, 0)
+    f1, g1 = md._cpu.secular_shape(h, vp, vs, rho, 1.0, c, 0, 1)
+    np.testing.assert_allclose(f1, f0, atol=2e-10 * max(1.0, np.max(np.abs(f0))), rtol=0)
+    np.testing.assert_allclose(g1, g0, atol=2e-9, rtol=0)
+    with md.Solver(backend=BACKEND, secular="fast", accuracy="high") as s:
+        fast = s(h, vp, vs, rho, [.5, 1., 2.], nmodes=2, wave="love")
+    with md.Solver(backend=BACKEND, secular="dunkin", accuracy="high") as s:
+        slow = s(h, vp, vs, rho, [.5, 1., 2.], nmodes=2, wave="love")
+    np.testing.assert_allclose(fast.phase_velocity, slow.phase_velocity, atol=0, rtol=0)
+    assert fast.secular == "fast"
+    assert s.stats()["secular_kernel"] == "sh"
+    assert s.kernel_report()["secular_kernel"] == "sh"
+
+
+@pytest.mark.parametrize("accuracy", ["high", "balanced", "fast"])
+@pytest.mark.parametrize("strategy", ["shape_adaptive", "qe_adaptive"])
+def test_solver_root_sets_match(accuracy, strategy):
+    periods = np.logspace(-1, 1, 12)
+    for h, vp, vs, rho in _models():
+        with md.Solver(backend=BACKEND, secular="dunkin", accuracy=accuracy, threads=2, search_strategy=strategy) as s:
+            slow = s(h, vp, vs, rho, periods, nmodes=3)
+        with md.Solver(backend=BACKEND, secular="fast", accuracy=accuracy, threads=2, search_strategy=strategy) as s:
+            fast = s(h, vp, vs, rho, periods, nmodes=3)
+        assert np.array_equal(np.isfinite(slow.phase_velocity), np.isfinite(fast.phase_velocity))
+        assert np.array_equal(slow.root_count, fast.root_count)
+        both = np.isfinite(slow.phase_velocity) & np.isfinite(fast.phase_velocity)
+        if both.any():
+            np.testing.assert_allclose(fast.phase_velocity[both], slow.phase_velocity[both],
+                                       atol=2e-7, rtol=1e-9)
+        assert fast.secular == "fast"
+        assert s.stats()["secular"] == "fast"
+        assert s.kernel_report()["secular_kernel"] == "dunkin_fast"
+
+
+def test_invalid_secular_and_legacy_uniform():
+    with pytest.raises(ValueError, match="secular"):
+        md.Solver(secular="other")
+    with pytest.raises(NotImplementedError, match="uniform"):
+        with md.Solver(secular="fast", search_strategy="uniform", backend="cpu") as s:
+            s([1., 0.], [3., 6.], [1.5, 3.5], [2., 2.7], [1.], nmodes=1)
+
+
+@pytest.mark.parametrize("options", [{"normalize": False}, {"precision": "float32"}])
+def test_fast_precision_probe_rejects_unsupported_options(options):
+    from modisp.native import secular_grid
+    with pytest.raises(ValueError, match="normalized float64"):
+        secular_grid([1., 0.], [3., 6.], [1.5, 3.5], [2., 2.7],
+                     [1.], .2, 3., 100, method="fast", **options)

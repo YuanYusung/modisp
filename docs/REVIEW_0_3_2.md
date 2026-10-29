@@ -1,5 +1,9 @@
 # modisp 0.3.2 implementation review — 2026-10-29
 
+> Historical review of commit `e6bd811`: its opt-in recommendation preceded the
+> requested CUDA default change. Current policy is CUDA `fast`, CPU `dunkin`;
+> see [development workflows](DEVELOPMENT.md). Test counts below describe that build.
+
 The review found no coefficient, layer-order or fluid-boundary error in the
 new contraction. Keep the evaluator opt-in and retain `dunkin` as the default
 and reproducible reference. `fast` optimizes Dunkin evaluation; it does not

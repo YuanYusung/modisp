@@ -8,6 +8,9 @@ source distribution. The CPU base package requires neither a GPU nor CUDA.
 Install matching base and plugin wheels, or use
 `python -m pip install --no-index --find-links /path/to/wheelhouse modisp[cuda12]`.
 Then select `Solver(backend="cuda")` or use the default automatic selection.
+CUDA adaptive solvers default to the optimized FP64 `secular="fast"` evaluator;
+use `secular="dunkin"` explicitly for the retained reference evaluator.
+CPU fallback and legacy uniform default to Dunkin.
 The public API and diagnostics are documented in the base package.
 
 Release 0.3.2 uses private ABI 6. Install the base and plugin from the same

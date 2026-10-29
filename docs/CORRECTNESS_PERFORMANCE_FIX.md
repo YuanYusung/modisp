@@ -1,5 +1,10 @@
 # 严格精度修复实验归档
 
+> Historical report. Version-specific test/benchmark scripts were consolidated
+> during 0.3.2 development. Use [current workflows](DEVELOPMENT.md); exact historical
+> scripts remain in Git history at `e6bd811`.
+
+
 本文件记录此前的严格精度方案，不代表当前 balanced/fast 行为。按用户后续指定的 0.5% 观测容差，当前方案见 [TOLERANT_PRESETS.md](TOLERANT_PRESETS.md)。
 
 ## 0.3.0 求根正确性修复与性能实验

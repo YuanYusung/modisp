@@ -1,86 +1,15 @@
 #!/Users/yusong/miniforge3/bin/python
-"""Numerical and lifecycle regressions introduced by workspace/stream reuse."""
-import concurrent.futures
+"""Benchmark checkpoint integrity and validation/comparison utilities."""
 import importlib.util
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-
 import numpy as np
 import pytest
 import modisp as md
-
-BACKEND = os.environ.get("MODISP_TEST_BACKEND", "cpu")
-FIELDS = ("thickness", "vp", "vs", "rho")
-ATTRS = ("phase_velocity", "mode_mask", "status", "trace_flags", "search_level",
-         "root_count", "search_bounds")
-
-
-def same(a, b, selection=slice(None)):
-    for name in ATTRS:
-        np.testing.assert_array_equal(getattr(a, name)[selection], getattr(b, name))
-
-
-def test_reused_capacity_mutated_inputs_and_profile():
-    batch = md.random_model_batch(9, 6, seed=20261028)
-    periods = np.array([2., .8, 2., 1.4])
-    with md.Solver(backend=BACKEND, threads=4) as solver:
-        first = solver(**batch, periods=periods, nmodes=3)
-        assert solver.stats()["engine_allocations"] == 1
-        assert "timings_s" not in solver.stats()
-        tail = solver(**{k: v[:2] for k, v in batch.items()}, periods=periods, nmodes=3)
-        assert solver.stats()["engine_allocations"] == 0
-        assert solver.stats()["capacity_models"] == 9
-        same(first, tail, slice(0, 2))
-        # Both model and period objects keep their addresses but change values.
-        for key in ("vp", "vs"):
-            batch[key] *= 1.03
-        periods[:] = [1., 3., 1., .5]
-        solver.profile = True
-        changed = solver(**batch, periods=periods, nmodes=3)
-        stats = solver.stats()
-        assert stats["timings_s"]["solver_total"] > 0
-        assert stats["cache_hits"] >= 0
-        stats["timings_s"]["solver_total"] = -1
-        assert solver.stats()["timings_s"]["solver_total"] > 0
-        with md.Solver(backend=BACKEND, threads=1) as fresh:
-            expected = fresh(**batch, periods=periods, nmodes=3)
-        same(changed, expected)
-        assert np.any(first.phase_velocity != changed.phase_velocity)
-        solver.close()
-        again = solver(**batch, periods=periods, nmodes=3)
-        same(again, expected)
-
-
-def test_concurrent_solvers_and_result_ownership():
-    batch = md.random_model_batch(3, 5, seed=876)
-    def work(profile):
-        with md.Solver(backend=BACKEND, threads=2, profile=profile) as s:
-            return s(**batch, periods=[.5, 1., 2.], nmodes=3)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        a, b = list(pool.map(work, [True, False]))
-    same(a, b)
-    # A subsequent call/close must not mutate already returned arrays.
-    snapshot = a.phase_velocity.copy()
-    work(False)
-    np.testing.assert_array_equal(snapshot, a.phase_velocity)
-
-
-@pytest.mark.skipif(BACKEND != "cuda", reason="CUDA launch variants require CUDA")
-@pytest.mark.parametrize("block", ["32", "64", "128", "256"])
-def test_cuda_launch_profile_and_tail(monkeypatch, block):
-    batch = md.random_model_batch(5, 7, seed=545)
-    with md.Solver(backend="cuda") as s:
-        expected = s(**batch, periods=[.7, 2., .7], nmodes=3)
-    monkeypatch.setenv("MODISP_CUDA_BLOCK", block)
-    with md.Solver(backend="cuda") as s:
-        for profile in (False, False, True, False):
-            s.profile = profile
-            same(expected, s(**batch, periods=[.7, 2., .7], nmodes=3))
-        tail = s(**{k: v[:2] for k, v in batch.items()}, periods=[.7, 2., .7], nmodes=3)
-        same(expected, tail, slice(0, 2))
-        assert s.stats()["engine_allocations"] == 0
+BACKEND=os.environ.get("MODISP_TEST_BACKEND","cpu")
+ATTRS=("phase_velocity","mode_mask","status","trace_flags","search_level","root_count","search_bounds")
 
 
 def test_streaming_complete_resume_and_corruption(tmp_path):
@@ -119,15 +48,6 @@ def test_streaming_complete_resume_and_corruption(tmp_path):
     data.flush()
     with pytest.raises(ValueError, match="checksum"):
         driver.run(args)
-
-
-def test_maximum_layer_count_shared_memory():
-    h=np.zeros(256);vp=np.full(256,6.);vs=np.full(256,3.5);rho=np.full(256,2.7)
-    with md.Solver(backend=BACKEND) as s:
-        many=s(h,vp,vs,rho,[1.],nmodes=1)
-        one=s([0.],[6.],[3.5],[2.7],[1.],nmodes=1)
-    assert not np.any(many.trace_flags & md.TRACE_SEARCH_UNCONVERGED)
-    np.testing.assert_allclose(many.phase_velocity,one.phase_velocity,atol=3e-6,rtol=2e-6)
 
 
 def test_interrupted_streaming_resumes_from_verified_block(tmp_path, monkeypatch):
@@ -177,3 +97,45 @@ def test_interrupted_streaming_resumes_from_verified_block(tmp_path, monkeypatch
         expected = solver(**driver.convert(model), periods=[.5, 1.], nmodes=5)
     for name in ATTRS:
         np.testing.assert_array_equal(np.load(args.output / f"{name}.npy"), getattr(expected, name))
+
+
+def test_reference_union_does_not_merge_two_close_modes():
+    from validate import merge_witnesses
+    root=np.array([1.,1.0000001,1.1])
+    merged=merge_witnesses(root,[root+1e-10,root-1e-10])
+    np.testing.assert_array_equal(merged,root)
+    assert len(merged)==3
+
+
+def test_benchmark_rejects_crossing_and_finite_mismatches():
+    import importlib.util
+    tool = Path(__file__).resolve().parents[1] / "tools" / "benchmark_secular.py"
+    if not tool.exists():
+        pytest.skip("source-only benchmark driver is not installed in runtime wheel")
+    spec = importlib.util.spec_from_file_location("secular_benchmark", tool)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    c = np.array([1., 2., 3.])
+    f = np.array([-1., 1., 1.])
+    good = driver.compare_pointwise(c, f, f.copy())
+    assert good["accepted"] and good["max_crossing_node_difference"] == 0.
+    missing = driver.compare_pointwise(c, f, np.ones(3))
+    assert not missing["accepted"] and not missing["crossing_count_equal"]
+    assert missing["max_crossing_node_difference"] is None
+    invalid = driver.compare_pointwise(c, f, np.array([-1., np.nan, 1.]))
+    assert not invalid["accepted"] and not invalid["finite_mask_equal"]
+    invalid = driver.compare_pointwise(c, np.full(3, np.nan), np.full(3, np.nan))
+    assert not invalid["accepted"] and invalid["max_abs_difference"] is None
+
+
+def test_consolidated_validation_stress_entrypoint(tmp_path):
+    import sys
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
+    import validate
+    output=tmp_path/"validation"
+    code=validate.main(["stress","--output",str(output),"--backend",BACKEND,
+                        "--seeds","3490","--models","1","--layers","4","--periods","3"])
+    report=json.loads((output/"report.json").read_text())
+    assert code==0 and report["passed"]
+    assert {row["wave"] for row in report["cases"]}=={"rayleigh","love"}
+    assert all(row["secular"]==("fast" if BACKEND=="cuda" else "dunkin") for row in report["cases"])

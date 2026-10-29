@@ -229,7 +229,7 @@ def compare(output, reference, stable, unresolved=0, unresolved_mask=None):
     return metrics
 
 
-def modisp_options(backend,threads,cmin,accuracy=None,strategy=None):
+def modisp_options(backend,threads,cmin,accuracy=None,strategy=None,secular=None):
     import inspect
     import modisp
     options=dict(backend=backend,threads=threads,cmin=cmin)
@@ -241,6 +241,10 @@ def modisp_options(backend,threads,cmin,accuracy=None,strategy=None):
         if "search_strategy" not in inspect.signature(modisp.Solver).parameters:
             raise RuntimeError("this modisp installation does not support search strategies")
         options['search_strategy']=strategy
+    if secular is not None:
+        if "secular" not in inspect.signature(modisp.Solver).parameters:
+            raise RuntimeError("this modisp installation does not support secular selection")
+        options["secular"]=secular
     return options
 
 
@@ -278,10 +282,10 @@ def quality(output,reference,stable,flags,complete,accuracy):
     return metrics
 
 
-def run_modisp_accuracy(suite, indices, backend, threads=1, accuracy=None,strategy=None):
+def run_modisp_accuracy(suite, indices, backend, threads=1, accuracy=None,strategy=None,secular=None):
     import modisp
     selected=take_models(suite,indices)
-    options=modisp_options(backend,threads,cmin_for(suite),accuracy,strategy)
+    options=modisp_options(backend,threads,cmin_for(suite),accuracy,strategy,secular)
     with modisp.Solver(**options) as solver:
         result = solver(
             *(selected[key] for key in FIELDS),
@@ -431,7 +435,7 @@ def accuracy(args, suites, environment):
             if solver_name.startswith("modisp"):
                 backend = solver_name.split("-")[1]
                 output, status, unresolved_mask,flags,stats = run_modisp_accuracy(
-                    suite, indices, backend, args.threads, args.accuracy,args.search_strategy
+                    suite, indices, backend, args.threads, args.accuracy,args.search_strategy,args.secular
                 )
                 metrics = compare(
                     output, reference, stable, unresolved_mask=unresolved_mask
@@ -544,11 +548,11 @@ def run_disba_batch(models, periods, cmin, cmaxes, executor=None):
     return output, unresolved
 
 
-def make_modisp_runner(models, periods, cmin, cmaxes, backend, threads,accuracy=None,strategy=None):
+def make_modisp_runner(models, periods, cmin, cmaxes, backend, threads,accuracy=None,strategy=None,secular=None):
     import modisp
 
     del cmaxes
-    solver = modisp.Solver(**modisp_options(backend,threads,cmin,accuracy,strategy))
+    solver = modisp.Solver(**modisp_options(backend,threads,cmin,accuracy,strategy,secular))
 
     def call():
         result = solver(
@@ -671,7 +675,7 @@ def performance(args, suites, environment):
                 backend = "cuda" if solver_name == "modisp-cuda" else "cpu"
                 threads = 1 if solver_name == "modisp-cpu1" else 8
                 solvers, call = make_modisp_runner(
-                    batch, periods, cmin, cmaxes_batch, backend, threads,args.accuracy,args.search_strategy
+                    batch, periods, cmin, cmaxes_batch, backend, threads,args.accuracy,args.search_strategy,args.secular
                 )
                 kind = "modisp"
             elif solver_name == "disba-serial":
@@ -768,6 +772,7 @@ def performance(args, suites, environment):
         "nmodes": NMODES,
         "modisp_accuracy_requested":args.accuracy,
         "modisp_strategy_requested":args.search_strategy,
+        "modisp_secular_requested":args.secular,
         "results": rows,
     }
     write_json(args.out / "summary.json", summary)
@@ -911,6 +916,7 @@ def parse_args():
                         help="accuracy: canonical/all QED, 4 per random_L, 8 seed models")
     common.add_argument('--accuracy',choices=('high','balanced','fast'),default=None,
                         help='modisp preset; recorded explicitly (default: installation default)')
+    common.add_argument('--secular',choices=('dunkin','fast'),default=None)
     common.add_argument('--search-strategy',choices=('shape_adaptive','qe_adaptive'),default=None)
     common.add_argument('--guard-gpu',action='store_true',help='reject competing GPU compute during this run')
     parser = argparse.ArgumentParser(description=__doc__)
@@ -951,6 +957,7 @@ def main():
     environment = collect_environment(args.qed_library)
     environment['requested_modisp_accuracy']=args.accuracy
     environment['requested_search_strategy']=args.search_strategy
+    environment['requested_secular']=args.secular
     manifest = make_manifest(
         suites, subset=args.subset,
         performance_batches=args.batches if args.command == "performance" else None,

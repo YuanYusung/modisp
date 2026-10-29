@@ -27,13 +27,13 @@ def main(argv=None):
     forward.add_argument("--sampling-rtol",type=float)
     forward.add_argument("--close-root-rtol",type=float,default=.005)
     forward.add_argument("--c-tol-rel",type=float)
-    forward.add_argument("--secular",choices=["dunkin","fast"],default="dunkin",
-                         help="experimental secular evaluator (default: dunkin)")
+    forward.add_argument("--secular",choices=["dunkin","fast"],default=None,
+                         help="secular evaluator (default: CUDA fast, CPU/uniform dunkin)")
     args=parser.parse_args(argv)
     if args.command=="doctor":
         data=dict(version=__version__,python=sys.executable,cpu_module=_cpu.__file__,
                   default_accuracy="balanced",default_search_strategy="shape_adaptive",
-                  default_secular="dunkin",secular_options=["dunkin","fast"],
+                  default_secular_by_backend={"cpu":"dunkin","cuda":"fast","uniform":"dunkin"},secular_options=["dunkin","fast"],
                   private_abi=int(_cpu.ABI_VERSION),sampling_capacity=2048)
         try:
             module=_load_cuda();available=bool(module.available(0));data.update(cuda_module=module.__file__,cuda_available=available,auto_backend="cuda" if available else "cpu")
@@ -41,6 +41,7 @@ def main(argv=None):
                 module.set_device(0);free,total=module.memory_info();data.update(cuda_device=module.device_name(),free_device_bytes=free,total_device_bytes=total)
         except BackendUnavailableError as exc:data.update(cuda_available=False,cuda_reason=str(exc),auto_backend="cpu")
         except RuntimeError as exc:data.update(cuda_available=False,cuda_reason=str(exc),auto_backend="error")
+        data["default_secular"]=data["default_secular_by_backend"].get(data["auto_backend"])
         print(json.dumps(data,indent=2));return 0
     with np.load(args.input,allow_pickle=False) as src:
         model={key:src[key] for key in ("thickness","vp","vs","rho")};periods=src["periods"]

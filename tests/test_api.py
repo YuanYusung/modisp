@@ -1,4 +1,8 @@
+#!/Users/yusong/miniforge3/bin/python
+"""Public API, backend selection, workspace ownership and concurrency."""
+import concurrent.futures
 import importlib
+import json
 import os
 from pathlib import Path
 import sys
@@ -6,8 +10,9 @@ import numpy as np
 import pytest
 import modisp as md
 from modisp.cli import main
+BACKEND=os.environ.get("MODISP_TEST_BACKEND","cpu")
 
-BACKEND=os.environ.get('MODISP_TEST_BACKEND','cpu')
+
 FIELDS=('thickness','vp','vs','rho')
 
 
@@ -53,8 +58,6 @@ def test_mixed_dry_wet_batch_and_explicit_ranges():
     assert np.nanmax(cropped.phase_velocity)<=1.
 
 
-
-
 def assert_tolerant(out, reference, accuracy):
     import sys
     from pathlib import Path
@@ -63,6 +66,7 @@ def assert_tolerant(out, reference, accuracy):
     metrics=compare(out.phase_velocity,np.asarray(reference)[None,:,None],out.trace_flags,
                     close_rtol=.005,error_rtol=2e-5 if accuracy=="balanced" else 2e-4)
     assert metrics["accepted"],metrics
+
 
 @pytest.mark.parametrize('path',sorted((Path(__file__).parent/'data').glob('B10000_*.npz')),ids=lambda x:x.stem)
 @pytest.mark.parametrize('accuracy',['high','balanced','fast'])
@@ -117,17 +121,24 @@ def test_budget_and_failed_work_diagnostics(accuracy):
     assert s.last_result is out
 
 
-@pytest.mark.parametrize("secular", ["dunkin", "fast"])
+@pytest.mark.parametrize("secular", [None, "dunkin", "fast"])
 def test_cli_npz(tmp_path,capsys,secular):
     source=tmp_path/'input.npz';target=tmp_path/'output.npz'
     np.savez(source,thickness=[0.],vp=[6.],vs=[3.5],rho=[2.7],periods=[1.,2.])
     assert main(['doctor'])==0
-    assert 'cpu_module' in capsys.readouterr().out
-    assert main(['forward',str(source),'--output',str(target),'--backend',BACKEND,'--nmodes','1','--secular',secular])==0
+    doctor=json.loads(capsys.readouterr().out)
+    assert doctor['default_secular_by_backend']=={'cpu':'dunkin','cuda':'fast','uniform':'dunkin'}
+    assert doctor['default_secular']==doctor['default_secular_by_backend'].get(doctor['auto_backend'])
+    command=['forward',str(source),'--output',str(target),'--backend',BACKEND,
+             '--nmodes','1','--sampling-rtol','.003']
+    if secular is not None:command.extend(['--secular',secular])
+    assert main(command)==0
     out=np.load(target)
     assert out['phase_velocity'].shape==(1,1,2)
     assert out['status'].dtype==np.uint8
-    assert str(out['secular'])==secular
+    assert str(out['secular'])==(secular or ("fast" if BACKEND=="cuda" else "dunkin"))
+    assert str(out['search_strategy'])=="shape_adaptive"
+    assert float(out['sampling_rtol'])==.003
 
 
 def test_functional_conveniences_and_input_validation():
@@ -148,6 +159,7 @@ def test_functional_conveniences_and_input_validation():
         with pytest.raises(NotImplementedError):s(*model.T,[1.])
     md.release()
 
+
 @pytest.mark.skipif(BACKEND!='cuda',reason='legacy uniform is CUDA-only')
 def test_uniform_legacy_facade_compatibility():
     from modisp._legacy import Solver as Legacy
@@ -158,7 +170,7 @@ def test_uniform_legacy_facade_compatibility():
         result=new(**batch,periods=per,nmodes=3)
     np.testing.assert_array_equal(result.phase_velocity,expected.phase_velocity)
     np.testing.assert_array_equal(result.trace_flags&255,expected.trace_flags)
-    assert result.backend_used=='cuda'
+    assert result.backend_used=='cuda' and result.secular=='dunkin'
 
 
 @pytest.mark.parametrize('accuracy',['high','balanced','fast'])
@@ -179,6 +191,7 @@ def test_empty_cropped_window_has_explicit_state(wave):
     assert np.all(out.search_level==-4)
     assert np.all(out.root_count==0)
 
+
 @pytest.mark.parametrize('path',sorted((Path(__file__).parent/'data').glob('witness_*.npz')),ids=lambda x:x.stem)
 @pytest.mark.parametrize('accuracy',['high','balanced','fast'])
 @pytest.mark.parametrize('cmin',[None,.2])
@@ -198,3 +211,102 @@ def test_independent_witness_regressions(path,accuracy,cmin):
     else:
         if accuracy=='high':np.testing.assert_allclose(out.phase_velocity[0,:,0],f['reference_hi'][:3],atol=3e-6,rtol=2e-6)
         else:assert_tolerant(out,f['reference_hi'],accuracy)
+
+
+ATTRS = ("phase_velocity", "mode_mask", "status", "trace_flags", "search_level",
+         "root_count", "search_bounds")
+
+
+def same(a, b, selection=slice(None)):
+    for name in ATTRS:
+        np.testing.assert_array_equal(getattr(a, name)[selection], getattr(b, name))
+
+
+def test_reused_capacity_mutated_inputs_and_profile():
+    batch = md.random_model_batch(9, 6, seed=20261028)
+    periods = np.array([2., .8, 2., 1.4])
+    with md.Solver(backend=BACKEND, threads=4) as solver:
+        first = solver(**batch, periods=periods, nmodes=3)
+        assert solver.stats()["engine_allocations"] == 1
+        assert "timings_s" not in solver.stats()
+        tail = solver(**{k: v[:2] for k, v in batch.items()}, periods=periods, nmodes=3)
+        assert solver.stats()["engine_allocations"] == 0
+        assert solver.stats()["capacity_models"] == 9
+        same(first, tail, slice(0, 2))
+        # Both model and period objects keep their addresses but change values.
+        for key in ("vp", "vs"):
+            batch[key] *= 1.03
+        periods[:] = [1., 3., 1., .5]
+        solver.profile = True
+        changed = solver(**batch, periods=periods, nmodes=3)
+        stats = solver.stats()
+        assert stats["timings_s"]["solver_total"] > 0
+        assert stats["cache_hits"] >= 0
+        stats["timings_s"]["solver_total"] = -1
+        assert solver.stats()["timings_s"]["solver_total"] > 0
+        with md.Solver(backend=BACKEND, threads=1) as fresh:
+            expected = fresh(**batch, periods=periods, nmodes=3)
+        same(changed, expected)
+        assert np.any(first.phase_velocity != changed.phase_velocity)
+        solver.close()
+        again = solver(**batch, periods=periods, nmodes=3)
+        same(again, expected)
+
+
+def test_concurrent_solvers_and_result_ownership():
+    batch = md.random_model_batch(3, 5, seed=876)
+    def work(profile):
+        with md.Solver(backend=BACKEND, threads=2, profile=profile) as s:
+            return s(**batch, periods=[.5, 1., 2.], nmodes=3)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        a, b = list(pool.map(work, [True, False]))
+    same(a, b)
+    # A subsequent call/close must not mutate already returned arrays.
+    snapshot = a.phase_velocity.copy()
+    work(False)
+    np.testing.assert_array_equal(snapshot, a.phase_velocity)
+
+
+@pytest.mark.skipif(BACKEND != "cuda", reason="CUDA launch variants require CUDA")
+@pytest.mark.parametrize("block", ["32", "64", "128", "256"])
+def test_cuda_launch_profile_and_tail(monkeypatch, block):
+    batch = md.random_model_batch(5, 7, seed=545)
+    with md.Solver(backend="cuda") as s:
+        expected = s(**batch, periods=[.7, 2., .7], nmodes=3)
+    monkeypatch.setenv("MODISP_CUDA_BLOCK", block)
+    with md.Solver(backend="cuda") as s:
+        for profile in (False, False, True, False):
+            s.profile = profile
+            same(expected, s(**batch, periods=[.7, 2., .7], nmodes=3))
+        tail = s(**{k: v[:2] for k, v in batch.items()}, periods=[.7, 2., .7], nmodes=3)
+        same(expected, tail, slice(0, 2))
+        assert s.stats()["engine_allocations"] == 0
+
+
+def test_maximum_layer_count_shared_memory():
+    h=np.zeros(256);vp=np.full(256,6.);vs=np.full(256,3.5);rho=np.full(256,2.7)
+    with md.Solver(backend=BACKEND) as s:
+        many=s(h,vp,vs,rho,[1.],nmodes=1)
+        one=s([0.],[6.],[3.5],[2.7],[1.],nmodes=1)
+    assert not np.any(many.trace_flags & md.TRACE_SEARCH_UNCONVERGED)
+    np.testing.assert_allclose(many.phase_velocity,one.phase_velocity,atol=3e-6,rtol=2e-6)
+
+
+def test_backend_secular_defaults_overrides_and_auto_fallback(monkeypatch):
+    model=([.2,0.],[2.,5.],[.8,2.8],[2.,2.6])
+    def unavailable():raise md.BackendUnavailableError("test unavailable")
+    if BACKEND=="cpu":monkeypatch.setattr(md,"_load_cuda",unavailable)
+    with md.Solver(backend=BACKEND) as solver:
+        default=solver(*model,[.5,1.],nmodes=2)
+        expected="fast" if BACKEND=="cuda" else "dunkin"
+        assert default.secular==solver.stats()["secular"]==solver.kernel_report()["secular"]==expected
+    with md.Solver(backend=BACKEND,secular=expected) as solver:
+        explicit=solver(*model,[.5,1.],nmodes=2)
+    np.testing.assert_array_equal(default.phase_velocity,explicit.phase_velocity)
+    with md.Solver(backend="auto") as solver:
+        selected=solver(*model,[1.],nmodes=1)
+        assert selected.secular==("fast" if selected.backend_used=="cuda" else "dunkin")
+        monkeypatch.setattr(md,"_load_cuda",unavailable)
+        fallback=solver(*model,[1.],nmodes=1)
+        assert fallback.backend_used=="cpu" and fallback.secular=="dunkin"
+        assert solver.stats()["secular"]==solver.kernel_report()["secular"]=="dunkin"

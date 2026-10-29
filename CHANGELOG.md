@@ -2,10 +2,12 @@
 
 ## 0.3.2 — 2026-10-29
 
-- Add the opt-in `Solver(secular="fast")` evaluator. It is the same FP64
+- Default CUDA adaptive solvers to `secular="fast"`, while CPU and legacy
+  uniform default to `dunkin`. `secular=None` resolves after backend selection;
+  explicit overrides remain available. Add the optimized fast evaluator. It is the same FP64
   Dunkin compound-matrix algebra with precomputed density reciprocals, one
   reciprocal normalization per layer, a fused 5-vector contraction, explicit
-  FMA and `exp2` for evanescent factors. The default `secular="dunkin"` path is
+  FMA and `exp2` for evanescent factors. The explicit `secular="dunkin"` path is
   unchanged and passes the retained bitwise frozen-fixture checks.
 - Measure the function and the solver separately. On the 70-layer CPU
   workloads the fixed-node secular evaluation improved 1.03–1.19x with zero
@@ -16,7 +18,7 @@
   `docs/SECULAR_FAST_0_3_2.md`.
 - Keep `secular` out of `search_strategy="uniform"` (legacy CUDA path) and
   reject unknown values. `wave="love"` continues to use the SH recurrence.
-- Record the requested `secular` in `DispersionBatch`, `stats()`,
+- Record the resolved `secular` in `DispersionBatch`, `stats()`,
   `kernel_report()` and CLI NPZs; `modisp doctor` lists supported evaluators.
   Stats and kernel reports identify the actual `sh` kernel for Love waves.
 - Reject unsupported fast precision probes instead of silently using Dunkin;
@@ -24,6 +26,10 @@
   benchmarks warm up and alternate evaluators, reject nonfinite/crossing
   mismatches and consume model density constants without requiring frequency
   constants.
+- Consolidate pytest into four modules and extended validation into
+  `tools/validate.py paper|external|stress`. Remove version-specific benchmark,
+  sampling, stress and installed-smoke scripts; retain generic benchmarks and
+  frozen/independent witnesses. See `docs/DEVELOPMENT.md`.
 - Bump the private extension ABI to 6; CPU and CUDA wheels must match.
 - Document the Buchen–Ben-Hador fast-delta and Xi et al. five-scalar
   formulations. A naive component transcription is not used: those vectors

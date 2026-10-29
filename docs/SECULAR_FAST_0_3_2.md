@@ -1,8 +1,9 @@
-# modisp 0.3.2: experimental `secular="fast"`
+# modisp 0.3.2: fast secular evaluator
 
-This release adds an opt-in evaluator for the same FP64 Dunkin compound-matrix
-dispersion function. `secular="dunkin"` remains the default and is unchanged;
-`secular="fast"` is an explicit experimental path. The two are compared on the
+This release adds an optimized evaluator for the same FP64 Dunkin compound-matrix
+dispersion function. `secular=None` defaults to `fast` on CUDA and `dunkin` on
+CPU after actual backend selection. Legacy `uniform` defaults to `dunkin`.
+Explicit evaluator selection remains available. The two are compared on the
 same models, the same fixed velocity nodes and the same FP64 arithmetic.
 
 ## Why the released function was revisited
@@ -198,22 +199,20 @@ It compares 100,000 arbitrary compound matrices (500,000 output components),
 using the sum of absolute matrix-product terms as the rounding-error scale.
 This is an algebra check, not an independent physical reference.
 
-The root-set regression is in `tests/test_secular_fast.py`. The released
+The root-set regression is in `tests/test_solver.py`. The released
 `secular="dunkin"` path is checked by the existing frozen-fixture suite.
 
-## Default-policy recommendation after review
+## Per-backend default policy
 
-Keep `secular="dunkin"` as the 0.3.2 default and retain it as a reproducible
-reference. The fast contraction matches all 25 matrix coefficients algebraically,
-and the observed agreement supports explicit use of `secular="fast"`, especially
-for the measured A800 workload. It is an optimized Dunkin evaluator, not an
-independent fast-delta formulation or a different root-search algorithm.
+CUDA adaptive solvers use `fast` by default. CPU and legacy uniform use
+`dunkin`. `backend="auto"` resolves this choice after device availability is
+known, so a CPU fallback uses Dunkin. An explicit `secular` value overrides
+adaptive defaults; `uniform` rejects explicit `fast`. Love still executes SH.
+The CLI uses the same policy, and result NPZs/stats report the resolved value.
 
-Reciprocal multiplication, FMA, summation order, `exp2` and platform `sincos`
-change FP64 rounding. Adaptive samples and refinement paths can consequently
-differ even when policy and acceptance rules are identical (the recorded CPU
-runs differ by one function evaluation). Matching Dunkin on these inputs does
-not establish external root completeness or identical behavior near every
-multiple/near-cutoff root. A future default change should be backed by broader
-paired stress tests and compiler/GPU coverage; the current CUDA binary evidence
-is for sm_80. Retain the explicit Dunkin option even after any default change.
+The explicit Dunkin evaluator remains available for frozen-fixture regression
+and reproducibility. Reciprocal multiplication, FMA, summation order, `exp2`
+and platform `sincos` change FP64 rounding and can change adaptive paths.
+The comparisons above do not establish root completeness on every input or
+identical performance on all CUDA architectures; the measured GPU is sm_80.
+See [development workflows](DEVELOPMENT.md) for current checks.

@@ -1,5 +1,10 @@
 # modisp 0.3.1: local shape-adaptive search
 
+> Historical report. Version-specific test/benchmark scripts were consolidated
+> during 0.3.2 development. Use [current workflows](DEVELOPMENT.md); exact historical
+> scripts remain in Git history at `e6bd811`.
+
+
 This release independently adapts the initial density sampling and five-point
 quadratic integral-consistency tests of Zhu, Xu, Hao and Yao (2026), BSSA 116,
 1383–1394, [doi:10.1785/0120260071](https://doi.org/10.1785/0120260071).

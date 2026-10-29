@@ -26,11 +26,11 @@ functions; their GRT validation does not establish this implementation's
 accuracy. See [0.3.1 methods and validation](docs/SHAPE_ADAPTIVE_0_3_1.md).
 `search_strategy="qe_adaptive"` retains the 0.3.0 path for comparisons.
 
-An opt-in `Solver(secular="fast")` evaluator keeps the same FP64 Dunkin algebra
+CUDA defaults to the optimized `secular="fast"` evaluator, which keeps the same FP64 Dunkin algebra
 but removes per-layer density divisions, uses one reciprocal normalization and
-contracts the 5-vector without materializing `5x5` entries. It is experimental:
-the default `secular="dunkin"` arithmetic is unchanged and passes the retained
-bitwise frozen-fixture checks. Fixed-node CPU measurements show 1.03–1.19× faster function
+contracts the 5-vector without materializing `5x5` entries. CPU defaults to
+`secular="dunkin"`; explicit Dunkin arithmetic passes the retained bitwise
+frozen-fixture checks. Fixed-node CPU measurements show 1.03–1.19× faster function
 evaluation and 1.07–1.10× full-solver throughput on the documented Apple-silicon
 workload; a generic x86-64 Linux build measured about 1.06× solver throughput,
 and an A800 1,024-model high-preset run improved from 6.13 s to 4.60 s (1.33×).
@@ -70,8 +70,9 @@ with Solver(backend="cpu", threads=4) as solver:
     print(solver.stats(), solver.last_result is result)
 ```
 
-`secular="dunkin"` is the default. `secular="fast"` selects the experimental
-evaluator; it changes FP64 rounding but not the model, sampling policy or root
+`secular=None` selects `fast` on CUDA and `dunkin` on CPU after backend
+selection; legacy `uniform` defaults to `dunkin`. Either evaluator can be
+selected explicitly. The fast evaluator changes FP64 rounding but not the model, sampling policy or root
 acceptance rules; rounding can change the actual adaptive sampling path. `accuracy="balanced"` is the default. Balanced/fast permit flagged ambiguity
 within a configurable close-root scale (`close_root_rtol=0.005`). Their local
 sampling is controlled separately by `sampling_rtol` (high `1e-3`, balanced
@@ -281,3 +282,13 @@ motivated by [Pan et al. (2026)](https://doi.org/10.1785/0120250207).
 BSD-3-Clause. Author: Yuan Yusong.
 
 AI-assisted development: GPT 6.1 Sol and Kimi k3.1 pro.
+
+## Development checks
+
+Run `python -m pytest -q` for the CPU suite, or
+`MODISP_TEST_BACKEND=cuda python -m pytest -q` for CUDA. Tests are grouped into
+API/lifecycle, physics/conditioning, solver/regression and tool checks.
+Use `python tools/validate.py {paper,external,stress} --help` for extended
+validation and `tools/benchmark_secular.py` for evaluator timing.
+See [development workflows](docs/DEVELOPMENT.md) for the retained tools and the
+consolidation of version-specific scripts.

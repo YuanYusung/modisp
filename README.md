@@ -222,16 +222,18 @@ The CUDA-only larger run contains **1,000 solve tasks and 64 independent
 models**: task `i` uses source model `i % 64`. It has 64,000 model-period tasks
 and **4,096 distinct reference traces**, not 1,000 independent models.
 
-| CUDA preset | Tasks | Independent models | Unique reference traces | First call (s) | Warm median (s) | Tasks/s | First/last strict issues |
-|---|---:|---:|---:|---:|---:|---:|---|
-| high | 1,000 | 64 | 4,096 | 0.685045 | 0.674103 | 1483.452 | 0 / 0 |
-| balanced | 1,000 | 64 | 4,096 | 0.195296 | 0.187797 | 5324.900 | 64 / 64 |
-| fast | 1,000 | 64 | 4,096 | 0.170717 | 0.164922 | 6063.464 | 156672 / 156672 |
+| CUDA preset | Tasks | Independent models | Unique reference traces | First call (s) | Warm median (s) | Tasks/s | First/last strict issues | Outside independent prefix (each output) |
+|---|---:|---:|---:|---:|---:|---:|---|---:|
+| high | 1,000 | 64 | 4,096 | 0.685045 | 0.674103 | 1483.452 | 0 / 0 | 0 |
+| balanced | 1,000 | 64 | 4,096 | 0.195296 | 0.187797 | 5324.900 | 64 / 64 | 48 |
+| fast | 1,000 | 64 | 4,096 | 0.170717 | 0.164922 | 6063.464 | 156672 / 156672 | 78 |
 
 The first and last high outputs have zero wrong/missing/extra/unresolved
 results under the strict threshold. Balanced/fast have zero isolated-root
 failures within their preset budgets, but their strict issue counts above
-retain the lower-refinement-precision differences. Third parties were not run
+retain both close-root rank shifts and lower-refinement-precision differences.
+Returned values beyond the independent prefix remain unjudged even when
+retained guards classify them. Third parties were not run
 at B=1,000; their same-size comparison remains B=1/8/64. GPU timing runs reject
 competing compute. Cold/JIT/setup costs, all five samples and per-configuration
 first/last accuracy checks are in the [same-host report](docs/SAME_HOST_0_3_1.md)

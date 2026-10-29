@@ -87,11 +87,11 @@ median/min/max, native counters and all first/last strict/quality checks.
 | disba, 8 processes | 0.012213 | 0.014693 | 0.107443 | 595.662 |
 | QEDispInv, serial | 0.012751 | 0.118384 | 0.842285 | 75.984 |
 
-| CUDA preset | Tasks | Independent models | Unique reference traces | First call (s) | Warm median (s) | Tasks/s | First/last strict issues |
-|---|---:|---:|---:|---:|---:|---:|---|
-| high | 1,000 | 64 | 4,096 | 0.685045 | 0.674103 | 1483.452 | 0 / 0 |
-| balanced | 1,000 | 64 | 4,096 | 0.195296 | 0.187797 | 5324.900 | 64 / 64 |
-| fast | 1,000 | 64 | 4,096 | 0.170717 | 0.164922 | 6063.464 | 156672 / 156672 |
+| CUDA preset | Tasks | Independent models | Unique reference traces | First call (s) | Warm median (s) | Tasks/s | First/last strict issues | Outside independent prefix (each output) |
+|---|---:|---:|---:|---:|---:|---:|---|---:|
+| high | 1,000 | 64 | 4,096 | 0.685045 | 0.674103 | 1483.452 | 0 / 0 | 0 |
+| balanced | 1,000 | 64 | 4,096 | 0.195296 | 0.187797 | 5324.900 | 64 / 64 | 48 |
+| fast | 1,000 | 64 | 4,096 | 0.170717 | 0.164922 | 6063.464 | 156672 / 156672 | 78 |
 
 These figures rerun third parties at B=1/8/64. There is no same-size B=1000
 third-party result. Disba uses the default Dunkin / dc=.005. Its parallel

@@ -4,6 +4,14 @@
 > The 0.3.0 results below describe the retained `qe_adaptive` path.
 
 
+## Same-host 0.3.1 rerun (2026-10-29)
+
+The latest [external same-host report](SAME_HOST_0_3_1.md) reruns the 171-model
+accuracy comparison, B=1/8/64 configurations and cyclic B=1000 CUDA workload
+using the released 0.3.1 binaries. It records all three presets, fresh third-party
+measurements, strict and budgeted accuracy, ordinal shifts and independent-prefix
+limits. The 0.2.0 tables below remain historical evidence.
+
 ## 0.3.0 observation-scale presets
 
 High retains the 0.2.1 bitwise fixtures. Balanced/fast are judged by ordinary

@@ -26,8 +26,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from contextlib import nullcontext
 
 import numpy as np
+from tolerant_metrics import compare as compare_quality
+from benchmark_modephys import GpuMonitor
 
 FIELDS = ("thickness", "vp", "vs", "rho")
 NMODES = 4
@@ -69,7 +72,7 @@ def load_suites(baseline):
     for path in paths:
         with np.load(path, allow_pickle=False) as source:
             data = {key: source[key].copy() for key in source.files}
-        missing = set(FIELDS + ("periods", "reference", "reference_stable")) - set(data)
+        missing = set(FIELDS + ("periods", "reference", "reference_stable", "reference_count_hi")) - set(data)
         if missing:
             raise SystemExit(f"{path}: missing fields {sorted(missing)}")
         shape = data["reference"].shape
@@ -226,25 +229,69 @@ def compare(output, reference, stable, unresolved=0, unresolved_mask=None):
     return metrics
 
 
-def run_modisp_accuracy(suite, indices, backend, threads=1, accuracy=None):
+def modisp_options(backend,threads,cmin,accuracy=None,strategy=None):
     import inspect
     import modisp
-
-    selected = take_models(suite, indices)
-    options = dict(backend=backend, threads=threads, cmin=cmin_for(suite))
+    options=dict(backend=backend,threads=threads,cmin=cmin)
     if accuracy is not None:
         if "accuracy" not in inspect.signature(modisp.Solver).parameters:
             raise RuntimeError("this modisp installation does not support accuracy presets")
         options["accuracy"] = accuracy
+    if strategy is not None:
+        if "search_strategy" not in inspect.signature(modisp.Solver).parameters:
+            raise RuntimeError("this modisp installation does not support search strategies")
+        options['search_strategy']=strategy
+    return options
+
+
+def guarded_reference(suite,indices):
+    """Keep independent cells; retained high only classifies prefix boundaries."""
+    import modisp
+    selected=take_models(suite,indices);primary=selected['reference'];m=primary.shape[1]
+    with modisp.Solver(backend='cpu',threads=8,accuracy='high',search_strategy='qe_adaptive',
+                       cmin=cmin_for(suite),workspace_bytes=1024**3) as solver:
+        guard=solver(*(selected[k] for k in FIELDS),suite['data']['periods'],nmodes=8).phase_velocity
+    agrees=np.all(np.isclose(guard[:,:m],primary,rtol=2e-6,atol=3e-6,equal_nan=True),axis=1)
+    reference=np.full_like(guard,np.nan);reference[:,:m]=primary
+    reference[:,m:]=np.where(agrees[:,None,:],guard[:,m:],np.nan)
+    complete=suite['data']['reference_count_hi'][indices]<=np.isfinite(reference).sum(axis=1)
+    return reference,complete,dict(kind='retained 0.3.0 high guard only; independent cells unchanged',
+                                 prefix_disagree_traces=int((~agrees).sum()))
+
+
+def quality(output,reference,stable,flags,complete,accuracy):
+    judged=np.all(stable,axis=1)
+    budget={'high':2e-6,'balanced':2e-5,'fast':2e-4}[accuracy]
+    x=output.transpose(0,2,1)[judged].T[None,:,:]
+    r=reference.transpose(0,2,1)[judged].T[None,:,:]
+    metrics=compare_quality(x,r,flags[judged][None,:],0. if accuracy=='high' else .005,
+                           budget,
+                           reference_complete=complete[judged][None,:])
+    metrics['reference_unjudged_traces']=int((~judged).sum())
+    # Guards can classify an omitted pair without independently validating
+    # returned roots above the archived four-mode prefix.
+    primary=reference[:,:output.shape[1]]
+    upper=np.max(np.where(np.isfinite(primary),primary,-np.inf),axis=1)
+    truncated=(np.isfinite(reference).sum(axis=1)>np.isfinite(primary).sum(axis=1))|~complete
+    outside=np.isfinite(output)&(output>upper[:,None,:]*(1+budget))&truncated[:,None,:]&judged[:,None,:]
+    metrics['outside_independent_prefix_cells']=int(outside.sum())
+    return metrics
+
+
+def run_modisp_accuracy(suite, indices, backend, threads=1, accuracy=None,strategy=None):
+    import modisp
+    selected=take_models(suite,indices)
+    options=modisp_options(backend,threads,cmin_for(suite),accuracy,strategy)
     with modisp.Solver(**options) as solver:
         result = solver(
             *(selected[key] for key in FIELDS),
             suite["data"]["periods"], nmodes=NMODES, wave="rayleigh",
         )
+        stats=solver.stats()
     if result.backend_used != backend:
         raise RuntimeError(f"requested {backend}, got {result.backend_used}")
     unresolved = (result.trace_flags & modisp.TRACE_SEARCH_UNCONVERGED) != 0
-    return result.phase_velocity, result.status, unresolved
+    return result.phase_velocity, result.status, unresolved,result.trace_flags,stats
 
 
 def map_disba_curve(curve, periods):
@@ -375,16 +422,22 @@ def accuracy(args, suites, environment):
         full_stable = stable_mask(suite)
         stable = full_stable[indices]
         suite_report = {"indices": indices, "solvers": {}}
+        guarded=None
+        if any(s.startswith('modisp') for s in args.solvers):
+            guarded,complete,guard_info=guarded_reference(suite,indices)
+            suite_report['guard_extension']=guard_info
         for solver_name in args.solvers:
+            quality_report=None
             if solver_name.startswith("modisp"):
                 backend = solver_name.split("-")[1]
-                output, status, unresolved_mask = run_modisp_accuracy(
-                    suite, indices, backend, args.threads, getattr(args, "accuracy", None)
+                output, status, unresolved_mask,flags,stats = run_modisp_accuracy(
+                    suite, indices, backend, args.threads, args.accuracy,args.search_strategy
                 )
                 metrics = compare(
                     output, reference, stable, unresolved_mask=unresolved_mask
                 )
-                extra = {"status": status, "unresolved": unresolved_mask}
+                quality_report=quality(output,guarded,stable,flags,complete,stats['accuracy'])
+                extra = {"status": status, "unresolved": unresolved_mask,"trace_flags":flags}
                 messages = []
             elif solver_name == "disba":
                 output, unresolved = run_disba_accuracy(suite, indices)
@@ -403,6 +456,9 @@ def accuracy(args, suites, environment):
                 reference=reference, reference_stable=stable, **extra,
             )
             report = dict(metrics)
+            report['reference_stable_traces']=int(np.all(stable,axis=1).sum())
+            report['reference_total_traces']=int(stable.shape[0]*stable.shape[2])
+            if quality_report is not None:report.update(quality=quality_report,stats=stats)
             if messages:
                 report["errors"] = messages
             write_json(args.out / f"{stem}.json", report)
@@ -418,7 +474,15 @@ def accuracy(args, suites, environment):
                 overall["max_common_abs_error"] = max(
                     overall["max_common_abs_error"] or 0.0, error
                 )
+            if quality_report is not None:
+                totals=overall.setdefault('quality',{})
+                for key,value in quality_report.items():
+                    if key=='accepted':totals[key]=totals.get(key,True) and value
+                    elif key.startswith('max_'):totals[key]=max(totals.get(key,0.),value)
+                    else:totals[key]=totals.get(key,0)+value
         summary["suites"][suite["name"]] = suite_report
+        write_json(args.out / "summary.json",summary)
+        print('accuracy',suite['name'],{s:{k:r[k] for k in ['wrong','missing','extra','unresolved']} for s,r in suite_report['solvers'].items()},flush=True)
     write_json(args.out / "summary.json", summary)
     write_accuracy_readme(args.out / "README.md", summary)
     if args.require_clean_modisp:
@@ -480,11 +544,11 @@ def run_disba_batch(models, periods, cmin, cmaxes, executor=None):
     return output, unresolved
 
 
-def make_modisp_runner(models, periods, cmin, cmaxes, backend, threads):
+def make_modisp_runner(models, periods, cmin, cmaxes, backend, threads,accuracy=None,strategy=None):
     import modisp
 
     del cmaxes
-    solver = modisp.Solver(backend=backend, threads=threads, cmin=cmin)
+    solver = modisp.Solver(**modisp_options(backend,threads,cmin,accuracy,strategy))
 
     def call():
         result = solver(
@@ -494,8 +558,10 @@ def make_modisp_runner(models, periods, cmin, cmaxes, backend, threads):
         if result.backend_used != backend:
             raise RuntimeError(f"requested {backend}, got {result.backend_used}")
         unresolved = (result.trace_flags & modisp.TRACE_SEARCH_UNCONVERGED) != 0
+        call.last_result=result
         return result.phase_velocity, unresolved
 
+    call.solver=solver
     return solver, call
 
 
@@ -519,6 +585,8 @@ def measure(call, repeats):
     start = time.perf_counter()
     first, first_status = call()
     first_seconds = time.perf_counter() - start
+    extra={}
+    if hasattr(call,'solver'):extra['first_trace_flags']=call.last_result.trace_flags.copy()
     start = time.perf_counter()
     call()
     warmup_seconds = time.perf_counter() - start
@@ -528,6 +596,11 @@ def measure(call, repeats):
         start = time.perf_counter()
         last, last_status = call()
         steady.append(time.perf_counter() - start)
+        if hasattr(call,'solver'):
+            if not np.array_equal(first.view(np.uint64),last.view(np.uint64)) or not np.array_equal(first_status,last_status):
+                raise RuntimeError('repeated modisp call changed scientific output')
+            np.testing.assert_array_equal(extra['first_trace_flags'],call.last_result.trace_flags)
+    if hasattr(call,'solver'):extra['last_trace_flags']=call.last_result.trace_flags.copy()
     return first, first_status, last, last_status, {
         "first_call_seconds": first_seconds,
         "warmup_seconds": warmup_seconds,
@@ -535,7 +608,7 @@ def measure(call, repeats):
         "median_seconds": statistics.median(steady),
         "min_seconds": min(steady),
         "max_seconds": max(steady),
-    }
+    },extra
 
 
 def correctness(first, last, first_status, last_status, reference, stable, unresolved_kind):
@@ -565,6 +638,9 @@ def performance(args, suites, environment):
     periods = data["periods"]
     reference = data["reference"]
     stable = stable_mask(suite)
+    guarded=complete=None
+    if any(s.startswith('modisp') for s in args.solvers):
+        guarded,complete,guard_info=guarded_reference(suite,np.arange(available))
     if models.shape[1:] != (10, 4) or periods.size != 64 or reference.shape[1] != 4:
         raise SystemExit(
             f"performance requires L=10,T=64,nmodes=4; got {models.shape}, T={periods.size}"
@@ -595,7 +671,7 @@ def performance(args, suites, environment):
                 backend = "cuda" if solver_name == "modisp-cuda" else "cpu"
                 threads = 1 if solver_name == "modisp-cpu1" else 8
                 solvers, call = make_modisp_runner(
-                    batch, periods, cmin, cmaxes_batch, backend, threads
+                    batch, periods, cmin, cmaxes_batch, backend, threads,args.accuracy,args.search_strategy
                 )
                 kind = "modisp"
             elif solver_name == "disba-serial":
@@ -631,14 +707,18 @@ def performance(args, suites, environment):
                 kind = "external"
             initialization_seconds = time.perf_counter() - init_start
             try:
-                first, first_status, last, last_status, timing = measure(call, args.repeats)
+                first, first_status, last, last_status, timing,extra = measure(call, args.repeats)
                 checks = correctness(
                     first, last, first_status, last_status, ref, stable_batch, kind
                 )
                 if kind == "modisp":
+                    preset=solvers.accuracy
+                    for end,output in [('first',first),('last',last)]:
+                        checks[end]['quality']=quality(output,guarded[model_indices],stable_batch,
+                            extra[end+'_trace_flags'],complete[model_indices],preset)
                     bad = sum(checks[end][key] for end in ("first", "last")
                               for key in ("wrong", "missing", "extra", "unresolved"))
-                    if bad:
+                    if (preset=='high' and bad) or any(not checks[end]['quality']['accepted'] for end in ['first','last']):
                         raise RuntimeError(
                             f"{solver_name} B={batch_size} failed output validation: {checks}"
                         )
@@ -647,6 +727,7 @@ def performance(args, suites, environment):
                     first=first, last=last, reference=ref,
                     reference_stable=stable_batch,
                     first_unresolved=first_status, last_unresolved=last_status,
+                    **extra,
                 )
                 row = {
                     "solver": solver_name,
@@ -660,8 +741,13 @@ def performance(args, suites, environment):
                     **timing,
                     "tasks_per_second": batch_size / timing["median_seconds"],
                     "checks": checks,
+                    "reference_stable_traces":int(np.all(stable_batch,axis=1).sum()),
+                    "unique_reference_traces":unique_models*int(periods.size),
                 }
+                if kind=='modisp':row.update(accuracy=preset,search_strategy=solvers.search_strategy,stats=solvers.stats())
                 rows.append(row)
+                write_json(args.out/'checkpoint.json',dict(environment=environment,results=rows))
+                print('performance',solver_name,args.accuracy,batch_size,timing['median_seconds'],checks['last']['wrong'],flush=True)
             finally:
                 if solvers is not None:
                     solvers.close()
@@ -680,6 +766,8 @@ def performance(args, suites, environment):
         "reference": "NPZ independent reference",
         "cmin": cmin,
         "nmodes": NMODES,
+        "modisp_accuracy_requested":args.accuracy,
+        "modisp_strategy_requested":args.search_strategy,
         "results": rows,
     }
     write_json(args.out / "summary.json", summary)
@@ -792,12 +880,15 @@ def collect_environment(qed_library):
     }
     try:
         import modisp
+        environment['modisp_version']=modisp.__version__
+        environment['cpu_native_sha256']=sha256(Path(modisp._cpu.__file__))
         start = time.perf_counter()
         device_name = modisp.device_name()
         environment["cuda"] = {
             "device_name": device_name,
             "initialization_seconds": time.perf_counter() - start,
         }
+        environment['cuda_native_sha256']=sha256(Path(modisp._load_cuda().__file__))
     except Exception as exc:
         environment["cuda"] = {"unavailable": str(exc)}
     return environment
@@ -818,13 +909,15 @@ def parse_args():
     )
     common.add_argument("--subset", action="store_true",
                         help="accuracy: canonical/all QED, 4 per random_L, 8 seed models")
+    common.add_argument('--accuracy',choices=('high','balanced','fast'),default=None,
+                        help='modisp preset; recorded explicitly (default: installation default)')
+    common.add_argument('--search-strategy',choices=('shape_adaptive','qe_adaptive'),default=None)
+    common.add_argument('--guard-gpu',action='store_true',help='reject competing GPU compute during this run')
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     accuracy_parser = subparsers.add_parser("accuracy", parents=[common], help="compare complete outputs")
     accuracy_parser.add_argument("--solvers", nargs="+", choices=("modisp-cpu", "modisp-cuda", "disba", "qed"), default=["modisp-cpu", "modisp-cuda", "disba", "qed"])
     accuracy_parser.add_argument("--threads", type=int, default=1)
-    accuracy_parser.add_argument("--accuracy", choices=("high", "balanced", "fast"), default=None,
-                                 help="modisp accuracy preset (default: installation default)")
     accuracy_parser.add_argument("--require-clean-modisp", action="store_true")
     performance_parser = subparsers.add_parser(
         "performance", parents=[common], help="measure fixed seed batches"
@@ -845,6 +938,9 @@ def parse_args():
     args.qed_library = args.qed_library.resolve()
     if not args.qed_library.is_file():
         parser.error(f"QED library does not exist: {args.qed_library}")
+    if args.command=='performance' and 'qed-serial' in args.solvers:
+        try:load_qed(args.qed_library,benchmark=True)
+        except AttributeError:parser.error('QED library lacks qed_benchmark_roots; use the benchmark adapter built from tools/qed_reference_adapter.cpp')
     return args
 
 
@@ -853,15 +949,21 @@ def main():
     args.out = prepare_output(args.out)
     suites = load_suites(args.baseline.resolve())
     environment = collect_environment(args.qed_library)
+    environment['requested_modisp_accuracy']=args.accuracy
+    environment['requested_search_strategy']=args.search_strategy
     manifest = make_manifest(
         suites, subset=args.subset,
         performance_batches=args.batches if args.command == "performance" else None,
     )
     write_json(args.out / "manifest.json", manifest)
-    if args.command == "accuracy":
-        accuracy(args, suites, environment)
-    else:
-        performance(args, suites, environment)
+    monitor=GpuMonitor({os.getpid()}) if args.guard_gpu else nullcontext()
+    with monitor:
+        if args.command == "accuracy":accuracy(args,suites,environment)
+        else:performance(args,suites,environment)
+        if args.guard_gpu:
+            monitor.check()
+            (args.out/'gpu-monitor.log').write_text('\n'.join(monitor.samples)+'\n')
+            write_json(args.out/'gpu-contention.json',dict(competing_compute=monitor.competitors))
 
 
 if __name__ == "__main__":

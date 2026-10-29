@@ -1,6 +1,7 @@
 # Validation
 
-> For 0.3.2 see [the fast-secular report](SECULAR_FAST_0_3_2.md).
+> For 0.3.2 see [the fresh same-host comparison](SAME_HOST_0_3_2.md) and
+> [the fast-secular method report](SECULAR_FAST_0_3_2.md).
 > For 0.3.1 use [the shape-adaptive validation report](SHAPE_ADAPTIVE_0_3_1.md).
 > The 0.3.0 results below describe the retained `qe_adaptive` path.
 

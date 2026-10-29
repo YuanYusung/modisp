@@ -1,8 +1,8 @@
 """Import installed extensions; CPU imports never require a CUDA runtime."""
 import importlib
 
-ABI_VERSION = 4
-VERSION = "0.3.0"
+ABI_VERSION = 5
+VERSION = "0.3.1"
 
 
 class BackendUnavailableError(RuntimeError):
@@ -23,7 +23,7 @@ def load():
         module = package.load()
     except ImportError as exc:
         raise BackendUnavailableError(f"CUDA extension cannot be loaded: {exc}") from exc
-    if module.ABI_VERSION != ABI_VERSION or module.VERSION != VERSION:
+    if getattr(package,"__version__",None) != VERSION or module.ABI_VERSION != ABI_VERSION or module.VERSION != VERSION:
         raise RuntimeError("CPU/CUDA package versions differ; install matching modisp and CUDA plugin wheels")
     return module
 

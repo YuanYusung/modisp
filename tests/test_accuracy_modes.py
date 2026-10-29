@@ -57,7 +57,7 @@ def _fixture_paths():
 @pytest.mark.parametrize("accuracy", ["high"])
 def test_presets_match_0_2_1_bitwise(path, accuracy):
     f = np.load(path, allow_pickle=True)
-    options = dict(backend=BACKEND, threads=4, accuracy=accuracy)
+    options = dict(backend=BACKEND, threads=4, accuracy=accuracy,search_strategy="qe_adaptive")
     if BACKEND == "cuda":
         options["workspace_bytes"] = 1024 ** 3
     if np.isfinite(f["cmin"]):
@@ -117,7 +117,7 @@ def test_period_threshold_and_stats():
     assert stats["approximate_search_enabled"] is True
     assert stats["early_accepts"] >= 0
     assert stats["verification_skipped"] >= 0
-    assert set(np.unique(out.search_level)).issubset({-1, -4, 3, 5, 6, 7})
+    assert set(np.unique(out.search_level)).issubset({-1, -4, 3, 5, 6, 7,8,9,10})
     assert np.array_equal(out.numerical_flags,
                           out.trace_flags & np.uint32(0xFFFFFFFF ^ md.TRACE_RANGE_TRUNCATED))
     report = solver.kernel_report()
@@ -177,7 +177,7 @@ def test_tolerant_chunking_and_quality_flags(accuracy):
         actual=solver(**batch,periods=periods,nmodes=5)
         stats=solver.stats()
         assert stats['early_accepts']==0
-        assert stats['strategy']=='observation_log'
+        assert stats['strategy']=='shape_adaptive'
         assert stats['verification_skipped']>0
     assert_same(expected,actual)
     assert np.any(actual.approximate_search)
@@ -236,7 +236,7 @@ def test_cluster_judge_does_not_waive_flagged_ordinary_errors():
 
 @pytest.mark.parametrize("accuracy,factor",[("balanced",.5),("fast",1.)])
 def test_observation_threshold_controls_grid_and_flags(accuracy,factor):
-    with md.Solver(backend=BACKEND,accuracy=accuracy,close_root_rtol=.01) as solver:
+    with md.Solver(backend=BACKEND,accuracy=accuracy,close_root_rtol=.01,search_strategy="qe_adaptive") as solver:
         result=solver([.2,0.],[2.,5.],[.8,2.8],[2.,2.6],[.5,1.,2.],nmodes=3)
         assert solver.stats()['velocity_step_rtol']==.01*factor
     assert result.close_root_rtol==.01

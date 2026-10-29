@@ -23,7 +23,7 @@ MD_HD bool ambiguous_sh_cutoff(const Medium &m,double c,double f) {
   return m.wave&&f==0.&&fabs(c-m.vs[m.L-1])<=64.*2.220446049250313e-16*m.vs[m.L-1];
 }
 
-MD_HD double sh_secular(const Medium &m,double omega,double c) {
+MD_HD double sh_secular(const Medium &m,double omega,double c,double *shape=nullptr) {
   const int top=m.vs[0]==0.0 ? 1:0, last=m.L-1;
   const double k=omega/c, kb=m.kb ? m.kb[last] : omega/m.vs[last];
   double e1=m.rho[last]*MD_SQRT((k+kb)*MD_FABS(k-kb));
@@ -39,7 +39,15 @@ MD_HD double sh_secular(const Medium &m,double omega,double c) {
     double s=MD_FMAX(MD_FABS(u),MD_FABS(v)); if(s<1e-40)s=1.;
     e1=u/s;e2=v/s;
   }
+  if(shape)*shape=e1/MD_SQRT(e1*e1+e2*e2+1e-300);
   return e1;
+}
+
+struct ShapeSample {double f,g;};
+MD_HD ShapeSample shape_evaluate(const Medium &m,double omega,double c){
+  ShapeSample s;
+  s.f=m.wave?sh_secular(m,omega,c,&s.g):dunkin_secular<double,true>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,m.vs[0]==0.,false,m.ka,m.kb,m.gammk,&s.g);
+  return s;
 }
 
 MD_HD double evaluate(const Medium &m,double omega,double c) {

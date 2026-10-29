@@ -1,5 +1,9 @@
 # Validation
 
+> For 0.3.1 use [the shape-adaptive validation report](SHAPE_ADAPTIVE_0_3_1.md).
+> The 0.3.0 results below describe the retained `qe_adaptive` path.
+
+
 ## 0.3.0 observation-scale presets
 
 High retains the 0.2.1 bitwise fixtures. Balanced/fast are judged by ordinary

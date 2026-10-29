@@ -14,15 +14,16 @@
 #include <vector>
 #include "common/accuracy.hpp"
 #include "common/physics.hpp"
+#include "common/shape.hpp"
 
 namespace py=pybind11;
 using Array=py::array_t<double,py::array::c_style|py::array::forcecast>;
 constexpr int CAP=2048;
 using Point=std::pair<double,double>;
-using Counters=std::array<unsigned long long,21>;
+using Counters=std::array<unsigned long long,27>;
 using Clock=std::chrono::steady_clock;
 double seconds(Clock::time_point t){return std::chrono::duration<double>(Clock::now()-t).count();}
-const char *counter_names[]={"evaluations","extrema_proposals","brackets","adaptive_converged","dense_converged","unconverged","capacity_hits","near_cutoff","nonfinite","refinement_failed","searches","rejected_f","analytical_empty","range_empty","verification_traces","family_conflicts","early_accepts","verification_skipped","dense_coarse_accepted","dense_fine_escalated","trough_risks"};
+const char *counter_names[]={"evaluations","extrema_proposals","brackets","adaptive_converged","dense_converged","unconverged","capacity_hits","near_cutoff","nonfinite","refinement_failed","searches","rejected_f","analytical_empty","range_empty","verification_traces","family_conflicts","early_accepts","verification_skipped","dense_coarse_accepted","dense_fine_escalated","trough_risks","shape_accepted","shape_subdivisions","shape_reused","shape_depth_limit","shape_work_limit","legacy_fallbacks"};
 extern "C" void md_dunkin_grid(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
 extern "C" void md_dunkin_grid_f32(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
 extern "C" double md_dunkin_point(const double*,const double*,const double*,const double*,int,double,double,int);
@@ -54,7 +55,7 @@ class Pool {
 
 struct Model {
   md::Medium view;
-  std::vector<double> ia,ib,tx,tn;
+  std::vector<double> ia,ib,tx,tn,sx;
   double seed,water_seed;
 };
 struct BracketRoot { double lo,hi,root; };
@@ -76,6 +77,98 @@ struct Scratch {
   Counters stats{};
   Scratch(){points.reserve(CAP);extra.reserve(CAP);cache.reserve(CAP);merged.reserve(CAP);}
 };
+
+void unique_points(std::vector<Point> &p);
+bool collect_roots(const md::Medium &,double,Scratch &,int,double,bool,bool);
+bool search_shape(const Model &model,double period,double lo,double hi,int K,double tol,double eta,Scratch &w,unsigned &flags){
+  const auto &m=w.medium;const double omega=md::two_pi<double>()/period;
+  const bool exact=w.policy.accuracy==md::Accuracy::High;
+  const double epsilon=exact?.015625:.25;
+  const double floor=exact?0.:w.policy.close_root_rtol*(w.policy.accuracy==md::Accuracy::Balanced?.5:1.);
+  if(!exact)flags|=2048;
+  w.roots.clear();++w.stats[10];
+  const double nlo=model.tn.front()/period,nhi=model.tn.back()/period;
+  const double start=std::floor(nlo/epsilon)+1.,need=std::ceil((nhi-nlo)/epsilon);
+  if(!std::isfinite(need)){++w.stats[25];return false;}
+  const double stop=nhi,covered=hi;
+  int work=0;
+  auto sample=[&](double c){++w.stats[0];++work;if(!w.profile)return md::shape_evaluate(m,omega,c);const auto t=Clock::now();auto s=md::shape_evaluate(m,omega,c);w.sample_s+=seconds(t);return s;};
+  md::ShapeSample left=sample(lo);
+  std::array<md::ShapeNode,md::shape_depth+2> stack;
+  size_t seed=0;double a=lo,density=start*epsilon,density_point=INFINITY;bool density_ready=false;
+  while(a<hi){
+    while(seed<model.sx.size()&&model.sx[seed]<=a)++seed;
+    const double static_point=seed<model.sx.size()?model.sx[seed]:INFINITY;
+    while(density<stop){
+      if(!density_ready){
+        if(++work>md::shape_work){++w.stats[25];return false;}
+        const auto begin=w.profile?Clock::now():Clock::time_point{};
+        density_point=exact?md::shape_exact_seed(m,model.tx.data(),model.tn.data(),model.tx.size(),density*period,epsilon*period):md::shape_seed(model.tx.data(),model.tn.data(),model.tx.size(),density*period);
+        if(w.profile)w.inverse_s+=seconds(begin);density_ready=true;
+      }
+      if(!std::isfinite(density_point)||density+epsilon==density){flags|=512;++w.stats[25];return false;}
+      if(density_point>a)break;density+=epsilon;density_ready=false;
+    }
+    if(!(density<stop))density_point=INFINITY;
+    const double b=std::fmin(static_point,density_point);
+    if(b>covered||!std::isfinite(b)){++w.stats[25];return false;}
+    const auto right=sample(b);int top=0;
+    stack[top++]={a,b,left,sample(a+(b-a)*.5),right,0};left=right;
+    while(top){
+      const auto node=stack[--top];const double width=node.b-node.a;
+      md::ShapeSample s[5]={node.s0,sample(node.a+.25*width),node.sm,sample(node.a+.75*width),node.s1};
+      w.stats[23]+=3;
+      if(work>md::shape_work){++w.stats[25];return false;}
+      for(const auto &v:s)if(!md::shape_finite(v)){flags|=32;return false;}
+      bool accept=md::shape_consistent(s,eta,!exact);
+      bool bracket=false;for(int j=0;j<4;++j)if((s[j].f<0.)!=(s[j+1].f<0.)||s[j].f==0.)bracket=true;
+      if(!accept&&exact&&bracket&&width<=.125*tol*node.b)accept=true;
+      if(!accept&&floor>0.&&width<=floor*node.b){accept=true;flags|=4096;}
+      if(!accept){
+        if(node.depth>=md::shape_depth||node.a+.25*width<=node.a){++w.stats[24];return false;}
+        if(work>md::shape_work){++w.stats[25];return false;}
+        const double mid=node.a+.5*width;
+        stack[top++]={mid,node.b,s[2],s[3],s[4],node.depth+1};
+        stack[top++]={node.a,mid,s[0],s[1],s[2],node.depth+1};++w.stats[22];continue;
+      }
+      ++w.stats[21];w.points.clear();
+      for(int j=0;j<5;++j)w.points.emplace_back(node.a+j*.25*width,s[j].f);
+      // A fitted extremum is only a sampling proposal; acceptance still uses
+      // signed original-function brackets and the original root refiner.
+      for(int j=1;j<4;++j){
+        if((s[j-1].f<0.)!=(s[j].f<0.)||(s[j].f<0.)!=(s[j+1].f<0.))continue;
+        const double sign=s[j].f<0.?-1.:1.;
+        const double u=sign*s[j-1].g,v=sign*s[j].g,z=sign*s[j+1].g;
+        const double curvature=.5*(u+z)-v;
+        if(!(curvature>0.&&v<u&&v<z))continue;
+        const double offset=(u-z)/(4.*curvature);
+        const double predicted=v-(z-u)*(z-u)/(16.*curvature);
+        if(std::fabs(offset)>=1.||!(predicted<=0.||v<.1*std::fmax(u,z)))continue;
+        const double c=node.a+(j+offset)*.25*width;
+        const auto probe=sample(c);if(!md::shape_finite(probe)){flags|=32;return false;}
+        w.points.emplace_back(c,probe.f);++w.stats[1];
+        if(probe.f*sign<0.)flags|=4096;
+        else{
+          int ev=0;double candidate=0.;const auto begin=w.profile?Clock::now():Clock::time_point{};const auto minimum=md::shape_minimum(m,omega,node.a+(j-1)*.25*width,node.a+(j+1)*.25*width,sign,tol,candidate,ev);
+          if(w.profile)w.sample_s+=seconds(begin);w.stats[0]+=ev;work+=ev;if(!md::shape_finite(minimum)){flags|=32;return false;}
+          w.points.emplace_back(candidate,minimum.f);if(minimum.f*sign<0.)flags|=4096;
+        }
+      }
+      unique_points(w.points);
+      if(node.b==hi&&md::ambiguous_sh_cutoff(m,w.points.back().first,w.points.back().second)){flags|=16;return false;}
+      if(!collect_roots(m,omega,w,K,tol,true,node.b==hi))return false;
+      if(static_cast<int>(w.roots.size())>=K){
+        if(md::has_close_roots(w.roots.data(),w.roots.size(),w.policy.close_root_rtol))flags|=4096;
+        if(!exact)++w.stats[17];
+        return true;
+      }
+    }
+    a=b;
+  }
+  if(md::has_close_roots(w.roots.data(),w.roots.size(),w.policy.close_root_rtol))flags|=4096;
+  if(!exact)++w.stats[17];
+  return true;
+}
 
 double evaluate(const md::Medium &m,double omega,double c,Scratch &w){
   ++w.stats[0];if(!w.profile)return md::evaluate(m,omega,c);
@@ -276,9 +369,10 @@ bool search_observation(const Model &model,double period,double lo,double hi,int
 class CpuSolver {
   int threads_;Pool pool;std::vector<Scratch> work;
   std::vector<Model> models;md::AccuracyPolicy policy_;
+  bool shape_;double sampling_rtol_;
  public:
-  CpuSolver(int threads,int accuracy,double period_threshold,double close_root_rtol):threads_(threads),pool(threads),work(threads),
-    policy_(md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol)){if(threads<1||threads>256)throw py::value_error("threads must be 1..256");}
+  CpuSolver(int threads,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001):threads_(threads),pool(threads),work(threads),
+    policy_(md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol)),shape_(shape),sampling_rtol_(sampling_rtol){if(threads<1||threads>256)throw py::value_error("threads must be 1..256");}
   py::tuple run(Array h,Array vp,Array vs,Array rho,Array periods,Array bounds,int modes,int wave,bool automatic,double tol,double accept,bool profile=false){
     if(h.ndim()!=2||h.shape(0)<1||h.shape(1)<1)throw py::value_error("model must be [B,L]");
     int B=h.shape(0),L=h.shape(1),nf=periods.size(),K=modes+2;
@@ -310,6 +404,18 @@ class CpuSolver {
         for(int j=0;j<L;++j)for(double c:{q.view.vp[j],q.view.vs[j]})if(c>lo&&c<hi)q.tx.push_back(c);
         std::sort(q.tx.begin(),q.tx.end());q.tx.erase(std::unique(q.tx.begin(),q.tx.end()),q.tx.end());
         for(double c:q.tx)q.tn.push_back(md::density_base(q.view,c));
+        if(shape_){
+          q.sx.clear();q.sx.reserve(6*L+174);q.sx.push_back(lo);q.sx.push_back(hi);
+          auto seed=[&](double c){if(c>lo&&c<hi&&std::isfinite(c))q.sx.push_back(c);};
+          const double automatic=md::automatic_lower(q.view);
+          const double anchor=automatic>0.&&std::isfinite(automatic)?std::fmin(lo,automatic):lo;
+          const double anchor_hi=std::nextafter(q.view.vs[L-1],0.);
+          if(hi>lo)for(int j=1;j<128;++j)seed(std::exp(std::log(anchor)+(std::log(anchor_hi)-std::log(anchor))*j/128.));
+          for(int j=q.view.wave&&top?1:0;j<L;++j)for(double v:{q.view.vp[j],q.view.vs[j]})for(int side=-1;side<=1;++side)seed(v*(1.+side*1e-7));
+          seed(q.seed);seed(.9*q.seed);seed(q.water_seed);seed(.9*q.water_seed);
+          if(policy_.accuracy==md::Accuracy::High)for(double v:{q.seed,q.water_seed})for(double gap:{1e-7,1e-6,1e-5,1e-4,1e-3}){seed(v*(1.-gap));seed(v*(1.+gap));}
+          std::sort(q.sx.begin(),q.sx.end());q.sx.erase(std::unique(q.sx.begin(),q.sx.end()),q.sx.end());
+        }
       });
       if(profile){prepare_s=seconds(stage_start);stage_start=Clock::now();}
       pool.run(static_cast<size_t>(B)*nf,[&](size_t t,int id){
@@ -349,11 +455,20 @@ class CpuSolver {
           if(lev==4)w.escalated=true;
           previous_ok=ok;w.previous=w.roots;
         }return -1;};
-        if(w.policy.accuracy!=md::Accuracy::High){
+        bool shape_ok=false;unsigned shape_diagnostics=0;
+        if(shape_){
+          const auto begin=profile?Clock::now():Clock::time_point{};
+          unsigned attempt=0;
+          shape_ok=search_shape(model,period,lo,hi,K,tol,sampling_rtol_,w,attempt);
+          if(shape_ok){word=attempt;level=8+static_cast<int>(w.policy.accuracy);}
+          else{shape_diagnostics=attempt;++w.stats[26];w.roots.clear();}
+          if(profile)w.adaptive_s+=seconds(begin);
+        }
+        if(!shape_ok&&w.policy.accuracy!=md::Accuracy::High){
           const auto begin=profile?Clock::now():Clock::time_point{};
           level=search_observation(model,period,lo,hi,K,tol,w,word)?(w.policy.accuracy==md::Accuracy::Balanced?6:7):-1;
           if(profile)w.dense_s+=seconds(begin);
-        }else level=search(false);
+        }else if(!shape_ok)level=search(false);
         if(level>=1&&level<=3&&!(word&(8|32|64|512))){
           {
             ++w.stats[14];auto &full=w.full;full=w.roots;
@@ -371,7 +486,7 @@ class CpuSolver {
           }
         }
         ready=level>=0;
-        if(ready)++w.stats[(level>=1&&level<=3)?3:4];
+        if(ready)++w.stats[((level>=1&&level<=3)||level>=8)?3:4];
         if(!ready){word|=4;++w.stats[5];}
         bool cutoff=false;
         for(int m=0;m<modes;++m){
@@ -380,11 +495,12 @@ class CpuSolver {
           if(std::isfinite(root)&&accept<1.){double value=evaluate(w.medium,omega,root,w);if(!std::isfinite(value)||std::fabs(value)>accept){root=NAN;word|=128;++w.stats[11];}}
           output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=root;
         }
+        if(shape_&&!shape_ok)word|=8192|shape_diagnostics;
         if(cutoff)word|=16;if(word&16)++w.stats[7];flags.mutable_data()[t]=word;levels.mutable_data()[t]=level;counts.mutable_data()[t]=ready?w.roots.size():-1;
       });
       if(profile)solve_s=seconds(stage_start);
     }
-    py::dict stats;for(int j=0;j<21;++j){unsigned long long v=0;for(auto&w:work)v+=w.stats[j];stats[counter_names[j]]=v;}
+    py::dict stats;for(int j=0;j<27;++j){unsigned long long v=0;for(auto&w:work)v+=w.stats[j];stats[counter_names[j]]=v;}
     stats["threads"]=threads_;stats["strategy"]="qe_adaptive";
     stats["accuracy"]=md::accuracy_name(policy_.accuracy);
     stats["period_threshold"]=policy_.period_threshold;
@@ -404,8 +520,8 @@ class CpuSolver {
 };
 
 PYBIND11_MODULE(_cpu,m){
-  m.attr("ABI_VERSION")=4;m.attr("VERSION")="0.3.0";
-  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double,double>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
+  m.attr("ABI_VERSION")=5;m.attr("VERSION")="0.3.1";
+  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double,double,bool,double>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
   m.def("bounds",[](Array h,Array vp,Array vs,Array rho,int wave,py::object low,py::object high){
     int B=h.shape(0),L=h.shape(1);py::array_t<double> result({B,2});
     const bool auto_low=low.is_none(),auto_hi=high.is_none();double given_low=auto_low?0.:low.cast<double>(),given_hi=auto_hi?0.:high.cast<double>();
@@ -419,6 +535,11 @@ PYBIND11_MODULE(_cpu,m){
   m.def("secular",[](Array h,Array vp,Array vs,Array rho,double period,Array velocity,int wave){
     py::array_t<double> out(velocity.size());md::Medium v{h.data(),vp.data(),vs.data(),rho.data(),nullptr,nullptr,static_cast<int>(h.size()),wave};
     py::gil_scoped_release release;for(py::ssize_t j=0;j<velocity.size();++j)out.mutable_data()[j]=md::evaluate(v,md::two_pi<double>()/period,velocity.data()[j]);return out;
+  });
+  m.def("secular_shape",[](Array h,Array vp,Array vs,Array rho,double period,Array velocity,int wave){
+    py::array_t<double> out(velocity.size()),feature(velocity.size());md::Medium v{h.data(),vp.data(),vs.data(),rho.data(),nullptr,nullptr,static_cast<int>(h.size()),wave};
+    {py::gil_scoped_release release;for(py::ssize_t j=0;j<velocity.size();++j){const auto s=md::shape_evaluate(v,md::two_pi<double>()/period,velocity.data()[j]);out.mutable_data()[j]=s.f;feature.mutable_data()[j]=s.g;}}
+    return py::make_tuple(out,feature);
   });
   m.def("md_dunkin_point",[](Array h,Array vp,Array vs,Array rho,int L,double period,double c,int normalize){if(L<1||h.size()!=L||vp.size()!=L||vs.size()!=L||rho.size()!=L||!(period>0)||!(c>0))throw py::value_error("invalid point geometry");return md_dunkin_point(h.data(),vp.data(),vs.data(),rho.data(),L,period,c,normalize);});
   m.def("probe_grid",[](Array h,Array vp,Array vs,Array rho,Array periods,double lo,double hi,int nc,bool normalize,bool fp32){

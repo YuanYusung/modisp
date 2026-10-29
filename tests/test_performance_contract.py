@@ -68,7 +68,7 @@ def test_concurrent_solvers_and_result_ownership():
 
 
 @pytest.mark.skipif(BACKEND != "cuda", reason="CUDA launch variants require CUDA")
-@pytest.mark.parametrize("block", ["128", "256"])
+@pytest.mark.parametrize("block", ["32", "64", "128", "256"])
 def test_cuda_launch_profile_and_tail(monkeypatch, block):
     batch = md.random_model_batch(5, 7, seed=545)
     with md.Solver(backend="cuda") as s:

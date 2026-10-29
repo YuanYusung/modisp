@@ -21,6 +21,8 @@
 
 namespace md {
 
+template<class T> MD_HD T shape_small(){if constexpr(sizeof(T)==8)return T(1e-300);else return T(1e-30);}
+
 // Route math calls through the host or device standard library.
 #ifdef __CUDACC__
 #define MD_FABS(x) fabs(x)
@@ -188,7 +190,7 @@ template <typename T, bool NORMALIZE>
 MD_HD T dunkin_secular(const T *d, const T *a, const T *b, const T *rho,
                        int nlayer, T wvno, T omega, int water = 0, bool clamp_omega = true,
                        const T *prepared_ka = nullptr, const T *prepared_kb = nullptr,
-                       const T *prepared_gammk = nullptr) {
+                       const T *prepared_gammk = nullptr, T *shape = nullptr) {
   if (clamp_omega && omega < T(1.0e-4)) omega = T(1.0e-4);
   const T wvno2 = wvno * wvno;
   const int last = nlayer - 1;
@@ -268,8 +270,13 @@ MD_HD T dunkin_secular(const T *d, const T *a, const T *b, const T *rho,
     else { const T z=(p<T(16)) ? MD_EXP(-T(2)*p) : T(0); cp=(T(1)+z)*T(.5); w=(T(1)-z)*T(.5)/rf; }
     const T t0=cp*e[0], t1=rho[0]*w*e[1];
     const T scale=MD_FMAX(T(1),MD_FMAX(MD_FABS(t0),MD_FABS(t1)));
+    if(shape){const T u=t0/scale,v=t1/scale;*shape=(u-v)/MD_SQRT(u*u+v*v+shape_small<T>());}
     return t0/scale-t1/scale;
   }
+  // A search feature only. The original signed value and its normalization
+  // remain unchanged. A smooth positive L2 scale retains variation when the maximum component
+  // normalization would return an exactly saturated +/-1 plateau.
+  if(shape){T other=shape_small<T>();for(int i=1;i<5;++i)other+=e[i]*e[i];*shape=e[0]/MD_SQRT(e[0]*e[0]+other);}
   return e[0];
 }
 

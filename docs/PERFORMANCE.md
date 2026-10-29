@@ -1,5 +1,9 @@
 # Performance measurement and ModePhys workflow
 
+> For 0.3.1 use [the shape-adaptive validation report](SHAPE_ADAPTIVE_0_3_1.md).
+> The 0.3.0 results below describe the retained `qe_adaptive` path.
+
+
 ## 0.3.0 observation-scale presets
 
 Balanced/fast now trade close-cluster resolution for throughput using a 0.5%

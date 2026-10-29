@@ -1,5 +1,9 @@
 # balanced/fast 观测尺度加速验证（2026-10-28）
 
+> For 0.3.1 use [the shape-adaptive validation report](SHAPE_ADAPTIVE_0_3_1.md).
+> The 0.3.0 results below describe the retained `qe_adaptive` path.
+
+
 已按本次选定的相对速度差 **0.5%** 实现可配置加速。`high` 保留原 0.2.1 的完整搜索及验证路径；`balanced` 和 `fast` 使用与观测尺度关联的速度网格。它们允许近根簇合并、严格根值差异和后续序号偏移，并在结果中保留不确定性标记。
 
 本实现发布为 **v0.3.0**，私有 ABI 为 **4**；CPU 与 CUDA 插件需要使用本次配套构建。早期本地 0.3.0 候选包使用 ABI 3，需同时替换。先前严格修复实验作为历史记录保留。

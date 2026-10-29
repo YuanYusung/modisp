@@ -62,10 +62,11 @@ reuse their native thread pool or device allocation across compatible calls.
 | `cmin`, `cmax` | `None` | Automatic range; explicit values define a cropped search window |
 | `c_tol_rel` | preset | FP64 refinement tolerance: high `1e-6`, balanced `1e-5`, fast `1e-4`; an explicit value overrides it |
 | `f_accept` | `1.0` | Optional normalized-function acceptance bound |
-| `search_strategy` | `"qe_adaptive"` | FP64 adaptive search; `"uniform"` is legacy CUDA solid Rayleigh only |
+| `search_strategy` | `"shape_adaptive"` | Local shape consistency; `"qe_adaptive"` retains 0.3.0; `"uniform"` is legacy CUDA solid Rayleigh only |
+| `sampling_rtol` | preset | Shape-integral consistency tolerance: high `1e-3`, balanced `1e-2`, fast `5e-2`; explicit values apply only to shape search |
 | `accuracy` | `"balanced"` | Search/accuracy preset: `"high"`, `"balanced"` or `"fast"` (see below) |
-| `close_root_rtol` | `0.005` | Relative close-root scale; controls balanced/fast logarithmic grid spacing |
-| `adaptive_period_threshold` | preset | Compatibility metadata only; observation grids do not depend on period |
+| `close_root_rtol` | `0.005` | Relative close-root scale; permits flagged balanced/fast close-cluster ambiguity |
+| `adaptive_period_threshold` | preset | Compatibility metadata only; shape decisions do not depend on this threshold |
 | `workspace_bytes` | `256*1024**2` | Native work-buffer budget, excluding inputs/results and CUDA context |
 | `chunk_size` | `None` | Optional model-count cap per chunk |
 | `profile` | `False` | Collect stage timings and cache/queue analysis in `stats()` |
@@ -77,21 +78,26 @@ an installation error. Numerical failures never trigger a backend change.
 
 ### Accuracy presets
 
-| Preset | Search | Maximum relative velocity step | Default refinement tolerance |
-|---|---|---:|---:|
-| `high` | Full 0.2.1 adaptive, independent-family and dense schedule | adaptive | `1e-6` |
-| `balanced` | Logarithmic velocity grid plus body-velocity and interface seeds | `0.5*close_root_rtol` (0.25% by default) | `1e-5` |
-| `fast` | Same logarithmic approach on a coarser grid | `close_root_rtol` (0.5% by default) | `1e-4` |
+| Preset | Shape consistency `sampling_rtol` | Default refinement `c_tol_rel` |
+|---|---:|---:|
+| `high` | `1e-3` | `1e-6` |
+| `balanced` | `1e-2` | `1e-5` |
+| `fast` | `5e-2` | `1e-4` |
 
-Evaluation and refinement remain FP64. The grid spacing is linked to the user
-selected observation scale, rather than inferred from the spacing of already
-found roots. Critical-velocity probes add samples without widening a cell.
-Searches collect two extra guard roots internally and return the requested
-ascending recovered prefix.
+All arithmetic remains FP64. Density and model-anchored critical/interface
+seeds initialize intervals; five-point integral comparisons drive local
+subdivision. High verifies density coordinates directly and does not stop or
+merge based on the observation threshold. Balanced/fast use a coarser density
+schedule and may stop an inconsistent interval at `0.5*close_root_rtol` /
+`close_root_rtol`, retaining uncertainty markers. This is a local stopping
+scale, not a promised maximum grid step in already smooth intervals. Shape
+sampling does not change the original signed secular function used for root
+brackets, refinement and `f_accept`. Searches collect two extra guard roots
+and return the requested ascending recovered prefix.
 
 Balanced/fast deliberately allow unresolved close pairs or clusters within the
 configured scale. Their returned integer ranks may shift after an omitted pair;
-they are **not certified physical mode indices**. Every observation-grid trace
+they are **not certified physical mode indices**. Every balanced/fast trace
 has `TRACE_APPROXIMATE_SEARCH`, `approximate_search=True`, and
 `mode_index_uncertain=True`, even when no close pair was detected. This is a
 conservative warning about reduced verification, not a claim that every value
@@ -101,9 +107,9 @@ hints; a false hint cannot exclude an unseen close pair.
 Use `high` when exact individual-root ordering matters. `close_root_rtol=.005`
 is an algorithmic observation-scale choice, not a measured resolution estimate
 for a particular survey. `adaptive_period_threshold` remains accepted for
-compatibility but does not affect the logarithmic search. `uniform` is unchanged.
+compatibility but does not affect shape search. `uniform` is unchanged.
 
-See [tolerant preset validation](TOLERANT_PRESETS.md) for ordinary-root,
+See [0.3.1 validation](SHAPE_ADAPTIVE_0_3_1.md) for ordinary-root,
 close-cluster, ordinal-shift and explicitly unjudged counts.
 
 ## Results and diagnostics
@@ -122,6 +128,7 @@ close-cluster, ordinal-shift and explicitly unjudged counts.
 - `close_root_mask`: `[B,nmodes,T]`, observed adjacent recovered roots within
   `close_root_rtol`. It cannot locate pairs missed by both samples.
 - `close_root_rtol`: the configured relative observation scale.
+- `search_strategy`, `sampling_rtol`: search configuration (sampling tolerance is `None` for legacy strategies).
 - `backend_used`, `backend_reason`, `wave`, `mode_convention`.
 
 `SolveStatus` values are `VALID=0`, `NOT_FOUND=1`, `UNRESOLVED=2` and
@@ -131,7 +138,8 @@ its window. On an approximate trace this is not evidence of physical absence.
 mode index on an approximate trace. An unresolved trace has all modes NaN. `root_count` is capped at
 `nmodes+2`, including two guard roots; an unresolved count is -1.
 
-`search_level=3/5` denotes high adaptive/dense acceptance; `6` is the balanced
+`search_level=8/9/10` denotes high/balanced/fast shape acceptance.
+`3/5` denotes retained high adaptive/dense acceptance; `6` is the balanced
 observation grid and `7` the fast grid. Values 1/2/4 belong to historical 0.3.0 results. -1 denotes an unresolved
 search, -2 legacy uniform, -3 an analytically empty SH family, and -4 an empty
 intersection between the requested and trapped domains.
@@ -153,22 +161,31 @@ workspace or root-conflict flag.
 | 1024 | `TRACE_ROOT_CONFLICT` | Sampling families disagreed; inspect final status |
 | 2048 | `TRACE_APPROXIMATE_SEARCH` | Observation-grid search; close clusters and ordinal ranks may be unresolved |
 | 4096 | `TRACE_CLOSE_ROOT_RISK` | Observed close roots or a sampled hidden-pair trough hint |
+| 8192 | `TRACE_ADAPTIVE_FALLBACK` | Local shape search required the retained 0.3.0 search |
 
 A budget too small for one model raises `MemoryError` before allocation.
 Hardware allocation and driver failures raise explicitly. `stats()` reports
 algorithm counters and estimated native work-buffer bytes.
 
 `workspace_bytes` controls allocation/chunking, not the observation threshold.
-High retains the original 2048-point adaptive workspace. Observation searches
-are tiled (64 CPU grid points / 256 CUDA grid points before critical seeds), so
-the complete logarithmic grid may contain more than 2048 points without a larger
-per-trace allocation. A separate 524288-cell workload ceiling remains explicit.
+The bounded CPU interval stack and CUDA compact activity queues are included
+in that budget, as are shared model seeds and the retained fallback buffers.
+CUDA conservatively reserves 5,632 queue bytes for every trace in the allocated
+model capacity (`shape_queue_reserved_bytes`), although only resident blocks
+use shared queues simultaneously. `device_workspace_bytes` separately reports
+actual global device allocations; `kernel_report()` reports shared resources.
+Depth, queue capacity, representability and workload failures trigger a local
+review or the corresponding retained 0.3.0 path. A successful fallback keeps
+`TRACE_ADAPTIVE_FALLBACK` and any earlier diagnostic bits. An unresolved final
+search keeps NaNs and its failure status. No fallback certifies completeness.
 
-`stats()` reports the strategy (`qe_adaptive` or `observation_log`), configured
-`velocity_step_rtol`, `refinement_tolerance`, `close_root_rtol`, approximate/risk
-trace counts, evaluations, workspace and timings. Historical early/dense
-counters remain available, but observation search does not run the adaptive
-ladder. `verification_skipped` counts completed observation-grid traces.
+`stats()` reports actual/requested strategy, `sampling_rtol`, refinement and
+close-root tolerances, `shape_accepted`, `shape_subdivisions`, `shape_reused`,
+`shape_depth_limit`, `shape_work_limit` (including CUDA queue capacity),
+`legacy_fallbacks`, evaluations,
+workspace and timings. `verification_skipped` includes completed approximate
+shape traces. `velocity_step_rtol` is `None` for shape search; its local close
+leaf stopping scale is `close_cluster_leaf_rtol`. Legacy counters remain.
 
 Version 0.3.0 retains an existing compatible allocation for smaller tail calls;
 `capacity_models` reports this high-water capacity and `engine_allocations`

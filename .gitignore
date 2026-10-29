@@ -9,6 +9,10 @@ cuda-plugin/cpp/*
 !cuda-plugin/cpp/common/
 cuda-plugin/cpp/common/*
 !cuda-plugin/cpp/common/accuracy.hpp
+!cuda-plugin/cpp/common/shape.hpp
+!cuda-plugin/cpp/cuda/
+cuda-plugin/cpp/cuda/*
+!cuda-plugin/cpp/cuda/shape.cuh
 research/
 wheelhouse/
 release/

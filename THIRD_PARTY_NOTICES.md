@@ -10,6 +10,16 @@ adaptations of the CPS/disba formulations. Preserve the following attribution:
 - Dunkin (1965), BSSA 55(2), 335–358.
 - Pan et al. (2026), doi:10.1785/0120250207: density-guided sampling and quadratic
   extrema motivate this independently implemented root search.
+- Zhu, D., Xu, T., Hao, J. and Yao, Z. (2026), "An Adaptive Strategy for Robust
+  and Efficient Computation of Dispersion Curves in a Layered Half-Space,"
+  BSSA 116, 1383–1394, doi:10.1785/0120260071: equations 13–14 motivate the
+  independently implemented local integral-consistency search. Its signed,
+  smoothly rescaled Dunkin/SH feature and acceptance safeguards are specific
+  to modisp. The paper validates GRT, not this implementation.
+
+PyGRT (GPL-3.0) is used only as a pinned external validation executable
+(`pygrt-kit==0.18.0`). No PyGRT source, binary or runtime linkage is included in
+modisp. Its implementations were not copied into the BSD source tree.
 
 QEDispInv source and binaries are not runtime dependencies and are not included
 in the published source/wheel packages. Optional external reference tests retain

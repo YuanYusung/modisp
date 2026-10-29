@@ -1,5 +1,23 @@
 # Changes
 
+## 0.3.1 — 2026-10-29
+
+- Default to local shape-adaptive sampling: density/critical/interface seeds,
+  five-point integral consistency, sample reuse and bounded local refinement.
+  Independently adapt Zhu et al. (2026) to the existing Dunkin/SH functions.
+- Keep the original signed FP64 function for bracketing, refinement and
+  acceptance. Extremum searches propose samples; amplitudes never accept roots.
+- Expose `sampling_rtol` separately from refinement and close-root tolerances;
+  retain the 0.5% balanced/fast ambiguity scale and quality markers.
+- Preserve `qe_adaptive` as the 0.3.0 comparison path and legacy `uniform`.
+- Use persistent CUDA blocks with compact local activity queues and shared
+  model constants; account for the CPU stack and device queues in workspace.
+- Add subdivision/reuse/limit/fallback counters and `TRACE_ADAPTIVE_FALLBACK`.
+  Persist strategy and sampling configuration in CLI outputs.
+- Upgrade the matching CPU/CUDA distributions to private ABI 5. See the
+  [0.3.1 validation report](docs/SHAPE_ADAPTIVE_0_3_1.md) for independent-reference
+  results, performance comparisons and retained numerical limitations.
+
 ## 0.3.0 — 2026-10-28
 
 - Use a configurable `close_root_rtol=0.005`: balanced/fast logarithmic velocity

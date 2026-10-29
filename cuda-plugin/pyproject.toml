@@ -4,19 +4,19 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "modisp-cuda12"
-version = "0.3.0"
+version = "0.3.1"
 description = "Optional CUDA 12 backend for modisp"
 requires-python = ">=3.10"
 license = "BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-12.6"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*"]
 readme = "README.md"
 authors = [{name = "Yuan Yusong"}]
-dependencies = ["modisp==0.3.0"]
+dependencies = ["modisp==0.3.1"]
 
 [tool.scikit-build]
 wheel.packages = ["python/modisp_cuda"]
-sdist.include = ["/cpp/**"]
-sdist.exclude = ["build/**", "dist/**", "**/__pycache__/**"]
+sdist.include = ["/cpp/**/*.hpp", "/cpp/**/*.cpp", "/cpp/**/*.cu", "/cpp/**/*.cuh"]
+sdist.exclude = ["build/**", "dist/**", "**/__pycache__/**", "**/.pytest_cache/**", "**/._*", "**/.DS_Store"]
 
 [tool.scikit-build.cmake.define]
 CMAKE_CUDA_ARCHITECTURES = "70;75;80;86;89;90"

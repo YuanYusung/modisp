@@ -17,6 +17,7 @@
 #include <string>
 #include "common/accuracy.hpp"
 #include "common/physics.hpp"
+#include "common/shape.hpp"
 #ifndef MD_DENSITY_TABLE
 #define MD_DENSITY_TABLE 1
 #endif
@@ -49,18 +50,21 @@ constexpr unsigned REFINE_FAILED = 1u << 6, F_REJECTED = 1u << 7;
 enum Stat { EVALS, EXTREMA, BRACKETS, ADAPT_OK, DENSE_OK, FAILED,
             CAPACITY_HITS, CUTOFFS, NONFINITES, REFINE_FAILURES, SEARCHES,
             ACCEPT_REJECTED, ANALYTIC_EMPTY, RANGE_EMPTY, VERIFICATIONS, CONFLICTS, CACHE_HITS, CACHE_MISSES,
-            EARLY_ACCEPTS, VERIFICATION_SKIPPED, DENSE_COARSE_OK, DENSE_FINE_ESCALATED, TROUGH_RISKS, NSTATS };
+            EARLY_ACCEPTS, VERIFICATION_SKIPPED, DENSE_COARSE_OK, DENSE_FINE_ESCALATED, TROUGH_RISKS,
+            SHAPE_ACCEPTED,SHAPE_SUBDIVISIONS,SHAPE_REUSED,SHAPE_DEPTH_LIMIT,SHAPE_WORK_LIMIT,LEGACY_FALLBACKS,NSTATS };
 const char *stat_names[NSTATS] = {
     "evaluations", "extrema_proposals", "brackets", "adaptive_converged",
     "dense_converged", "unconverged", "capacity_hits", "near_cutoff",
     "nonfinite", "refinement_failed", "searches", "rejected_f", "analytical_empty", "range_empty", "verification_traces", "family_conflicts", "cache_hits", "cache_misses",
-    "early_accepts", "verification_skipped", "dense_coarse_accepted", "dense_fine_escalated", "trough_risks"};
+    "early_accepts", "verification_skipped", "dense_coarse_accepted", "dense_fine_escalated", "trough_risks",
+    "shape_accepted","shape_subdivisions","shape_reused","shape_depth_limit","shape_work_limit","legacy_fallbacks"};
 
 struct Device {
   double *d, *a, *b, *r, *period, *bounds, *ia, *ib, *tx, *tn, *seeds, *cache_x, *cache_y;
   int *nt, *cache_n, *queue, *next_queue, *queue_n, *next_n, *cursor;
   int wave, automatic, guarded, profile;
   int accuracy, accept_level1, accept_level2, verify_safe_skip, allow_dense_early;
+  int shape;double sampling_rtol;double *shape_x;int *shape_n;
   double close_root_rtol;
   double period_threshold, gap_factor, dense_gap_factor, trough_threshold;
   int dense_floor4, dense_floor5, dense_factor4, dense_factor5, dense_tile;
@@ -504,6 +508,8 @@ __global__ void observation_search(Device st,int L,int nf,int K,int modes,double
 }
 
 // Persistent blocks consume only active traces, entirely on the device.
+#include "cuda/shape.cuh"
+
 template<bool ADAPTIVE>
 __global__ void search(Device st,int L,int nf,int K,double delta,double tol,int lev) {
   extern __shared__ double sm[];__shared__ int index;
@@ -629,7 +635,7 @@ __global__ void reconcile(Device st,int traces,int K,double tol){
 __global__ void final_statistics(Device st,int traces){
   const int t=blockIdx.x*blockDim.x+threadIdx.x;if(t>=traces)return;
   if(st.flags[t]&UNCONVERGED)atomicAdd(&st.stats[FAILED],1ULL);
-  else if(st.level[t]>=1&&st.level[t]<=3)atomicAdd(&st.stats[ADAPT_OK],1ULL);
+  else if((st.level[t]>=1&&st.level[t]<=3)||st.level[t]>=8)atomicAdd(&st.stats[ADAPT_OK],1ULL);
   else if(st.level[t]>=4)atomicAdd(&st.stats[DENSE_OK],1ULL);
   if(st.flags[t]&CUTOFF)atomicAdd(&st.stats[CUTOFFS],1ULL);
 }
@@ -676,6 +682,7 @@ class Solver {
     const size_t n=static_cast<size_t>(B)*L_;const int traces=B*nf_;
     measured("h2d",profile,[&]{up(st_.d,hd_,n);up(st_.a,ha_,n);up(st_.b,hb_,n);up(st_.r,hr_,n);up(st_.period,hp_,nf_);up(st_.bounds,hbound_,2*B);});
     measured("model_prepare",profile,[&]{prepare_models<<<B,256,0,stream_>>>(st_,B,L_);});
+    if(st_.shape)measured("shape_model_prepare",profile,[&]{shape_prepare_models<<<B,256,0,stream_>>>(st_,B,L_);});
     zero(st_.stats,NSTATS*sizeof(unsigned long long));
     measured("initialize",profile,[&]{initialize<<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_,L_,nf_,modes_);});
     const size_t sm=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*L_)*sizeof(double);
@@ -693,6 +700,13 @@ class Solver {
       measured("compare",profile,[&]{compare<<<(traces+255)/256,256,0,stream_>>>(st_,traces,L_,nf_,K_,modes_,tol,accept,lev,lev<3||lev==4,lev==5&&finish_last);});
       check(cudaGetLastError());std::swap(st_.queue,st_.next_queue);std::swap(st_.queue_n,st_.next_n);
     }};
+    if(st_.shape){
+      const size_t shape_shared=(md::shape_storage_doubles+(MD_TRACE_CONSTANTS?9:6)*L_)*sizeof(double);
+      measured("shape_search",profile,[&]{shape_search<<<std::min(traces,blocks_),block_,shape_shared,stream_>>>(st_,L_,nf_,K_,modes_,tol,accept);});
+      zero(st_.queue_n,sizeof(int));
+      measured("shape_fallback_prepare",profile,[&]{prepare_shape_fallback<<<(traces+255)/256,256,0,stream_>>>(st_,traces);});
+      zero(st_.cursor,sizeof(int));
+    }
     if(st_.accuracy!=0){
       if(profile)check(cudaMemcpyAsync(activity_,st_.queue_n,sizeof(int),cudaMemcpyDeviceToDevice,stream_));
       measured("observation_search",profile,[&]{observation_search<<<std::min(traces,blocks_),block_,sm,stream_>>>(st_,L_,nf_,K_,modes_,tol,accept);});
@@ -708,10 +722,11 @@ class Solver {
     check(cudaGetLastError());
   }
  public:
-  Solver(int B,int L,int nf,int modes,int accuracy,double period_threshold,double close_root_rtol):B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2){
+  Solver(int B,int L,int nf,int modes,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001):B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2){
     if(B<1||L<1||nf<1||modes<1||L>256||modes>256)throw py::value_error("QE geometry requires B,nf,modes>=1, 1<=L<=256, modes<=256");
     const md::AccuracyPolicy policy=md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol);
     st_.close_root_rtol=policy.close_root_rtol;
+    st_.shape=shape;st_.sampling_rtol=sampling_rtol;
     st_.accuracy=static_cast<int>(policy.accuracy);st_.accept_level1=policy.accept_level1;st_.accept_level2=policy.accept_level2;
     st_.period_threshold=policy.period_threshold;st_.gap_factor=policy.gap_factor;st_.dense_gap_factor=policy.dense_gap_factor;st_.trough_threshold=policy.trough_threshold;
     st_.dense_floor4=policy.dense_floor4;st_.dense_floor5=policy.dense_floor5;st_.dense_factor4=policy.dense_factor4;st_.dense_factor5=policy.dense_factor5;
@@ -721,16 +736,18 @@ class Solver {
     check(cudaGetDevice(&device_));
     try{
       check(cudaStreamCreateWithFlags(&stream_,cudaStreamNonBlocking));
-      block_=env_integer("MODISP_CUDA_BLOCK",256,128,256);if(block_!=128&&block_!=256)throw std::invalid_argument("MODISP_CUDA_BLOCK must be 128 or 256");
-      cudaDeviceProp prop;check(cudaGetDeviceProperties(&prop,device_));blocks_=env_integer("MODISP_CUDA_BLOCKS_PER_SM",2,1,8)*prop.multiProcessorCount;
+      block_=env_integer("MODISP_CUDA_BLOCK",shape?32:256,shape?32:128,256);if((shape?(block_!=32&&block_!=64&&block_!=128&&block_!=256):(block_!=128&&block_!=256)))throw std::invalid_argument(shape?"MODISP_CUDA_BLOCK must be 32, 64, 128 or 256":"MODISP_CUDA_BLOCK must be 128 or 256");
+      cudaDeviceProp prop;check(cudaGetDeviceProperties(&prop,device_));blocks_=env_integer("MODISP_CUDA_BLOCKS_PER_SM",shape?12:2,1,shape?16:8)*prop.multiProcessorCount;
       const int shared=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*L_)*sizeof(double);
       // Use one maximum for all supported geometries: another concurrent
       // solver must never lower this per-function attribute below our need.
-      if(shared>static_cast<int>(prop.sharedMemPerBlock)){const int maximum=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*256)*sizeof(double);check(cudaFuncSetAttribute(search<true>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));check(cudaFuncSetAttribute(search<false>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));check(cudaFuncSetAttribute(observation_search,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));}
+      if(shared>static_cast<int>(prop.sharedMemPerBlock)){const int maximum=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*256)*sizeof(double);check(cudaFuncSetAttribute(search<true>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));check(cudaFuncSetAttribute(search<false>,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));check(cudaFuncSetAttribute(observation_search,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));check(cudaFuncSetAttribute(shape_search,cudaFuncAttributeMaxDynamicSharedMemorySize,maximum));}
+      if(shape)check(cudaFuncSetAttribute(shape_search,cudaFuncAttributeMaxDynamicSharedMemorySize,(2*CAP+(MD_TRACE_CONSTANTS?9:6)*256)*sizeof(double)));
       auto allocate=[&](auto *&ptr,size_t count){alloc(ptr,count);device_bytes_+=count*sizeof(*ptr);};
       allocate(st_.d,models);allocate(st_.a,models);allocate(st_.b,models);allocate(st_.r,models);
       allocate(st_.period,nf);allocate(st_.bounds,2*B);allocate(st_.ia,models);allocate(st_.ib,models);
       allocate(st_.tx,static_cast<size_t>(B)*TABLE);allocate(st_.tn,static_cast<size_t>(B)*TABLE);allocate(st_.nt,B);allocate(st_.seeds,2*B);
+      if(shape){allocate(st_.shape_x,static_cast<size_t>(B)*CAP);allocate(st_.shape_n,B);}
       allocate(st_.cache_x,tr*CACHE);allocate(st_.cache_y,tr*CACHE);allocate(st_.cache_n,tr);
       allocate(st_.queue,tr);allocate(st_.next_queue,tr);allocate(st_.queue_n,1);allocate(st_.next_n,1);allocate(st_.cursor,1);
       allocate(st_.lo,roots);allocate(st_.hi,roots);allocate(st_.flo,roots);allocate(st_.fhi,roots);
@@ -763,6 +780,7 @@ class Solver {
     QE_FREE(count) QE_FREE(prev_count) QE_FREE(status) QE_FREE(active) QE_FREE(level) QE_FREE(flags) QE_FREE(stats)
     QE_FREE(full_roots) QE_FREE(guard_roots) QE_FREE(verify) QE_FREE(guard_count) QE_FREE(full_count)
     QE_FREE(sample_gap) QE_FREE(risk) QE_FREE(escalated)
+    QE_FREE(shape_x) QE_FREE(shape_n)
 #undef QE_FREE
     if(activity_){cudaFree(activity_);activity_=nullptr;}
     if(host_input_){cudaFreeHost(host_input_);host_input_=nullptr;}if(host_output_){cudaFreeHost(host_output_);host_output_=nullptr;}
@@ -812,9 +830,9 @@ void bind_qe(py::module_ &m) {
   m.def("available",[](int device){int n=0;return cudaGetDeviceCount(&n)==cudaSuccess&&device>=0&&device<n;},py::arg("device")=0);
   m.def("set_device",[](int device){qe::check(cudaSetDevice(device));});
   m.def("memory_info",[](){size_t free,total;qe::check(cudaMemGetInfo(&free,&total));return py::make_tuple(free,total);});
-  m.def("qe_kernel_report",[](int L,int accuracy){const void *kernel=accuracy==0?reinterpret_cast<const void*>(qe::search<true>):reinterpret_cast<const void*>(qe::observation_search);cudaFuncAttributes a;qe::check(cudaFuncGetAttributes(&a,kernel));py::dict d;d["registers_per_thread"]=a.numRegs;d["static_shared_bytes"]=a.sharedSizeBytes;d["local_bytes_per_thread"]=a.localSizeBytes;int block=qe::env_integer("MODISP_CUDA_BLOCK",256,128,256),active=0;qe::check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&active,kernel,block,(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L)*sizeof(double)));d["search_block_threads"]=block;d["max_active_blocks_per_sm"]=active;d["configured_blocks_per_sm"]=qe::env_integer("MODISP_CUDA_BLOCKS_PER_SM",2,1,8);d["dynamic_shared_bytes"]=(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L)*sizeof(double);d["cache_points_per_trace"]=qe::CACHE;d["table_capacity_per_model"]=qe::TABLE;d["search_kernel"]=accuracy==0?"qe_adaptive":"observation_log";return d;},py::arg("L"),py::arg("accuracy")=0);
+  m.def("qe_kernel_report",[](int L,int accuracy,bool shape){const void *kernel=shape?reinterpret_cast<const void*>(qe::shape_search):accuracy==0?reinterpret_cast<const void*>(qe::search<true>):reinterpret_cast<const void*>(qe::observation_search);cudaFuncAttributes a;qe::check(cudaFuncGetAttributes(&a,kernel));py::dict d;d["registers_per_thread"]=a.numRegs;d["static_shared_bytes"]=a.sharedSizeBytes;d["local_bytes_per_thread"]=a.localSizeBytes;int block=qe::env_integer("MODISP_CUDA_BLOCK",shape?32:256,shape?32:128,256),active=0;qe::check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&active,kernel,block,(shape?(md::shape_storage_doubles+(MD_TRACE_CONSTANTS?9:6)*L):(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L))*sizeof(double)));d["search_block_threads"]=block;d["max_active_blocks_per_sm"]=active;d["configured_blocks_per_sm"]=qe::env_integer("MODISP_CUDA_BLOCKS_PER_SM",shape?12:2,1,shape?16:8);d["dynamic_shared_bytes"]=(shape?(md::shape_storage_doubles+(MD_TRACE_CONSTANTS?9:6)*L):(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L))*sizeof(double);d["cache_points_per_trace"]=qe::CACHE;d["table_capacity_per_model"]=qe::TABLE;d["search_kernel"]=shape?"shape_warp":(accuracy==0?"qe_adaptive":"observation_log");return d;},py::arg("L"),py::arg("accuracy")=0,py::arg("shape")=false);
   py::class_<qe::Solver>(m,"QeSolver")
-    .def(py::init<int,int,int,int,int,double,double>(),py::arg("B"),py::arg("L"),py::arg("nf"),py::arg("nmodes"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005)
+    .def(py::init<int,int,int,int,int,double,double,bool,double>(),py::arg("B"),py::arg("L"),py::arg("nf"),py::arg("nmodes"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001)
     .def("run",&qe::Solver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),
          py::arg("periods"),py::arg("bounds"),py::arg("c_tol_rel")=1e-6,py::arg("f_accept")=1.0,py::arg("wave")=0,py::arg("automatic")=false,py::arg("profile")=false)
     .def("close",&qe::Solver::close);

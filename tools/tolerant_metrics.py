@@ -4,6 +4,7 @@
 References may contain guard roots beyond the requested output prefix. Values
 above a truncated reference prefix are counted as unknown, never as validated.
 """
+import math
 import numpy as np
 
 APPROXIMATE = 2048
@@ -17,16 +18,16 @@ def compare(velocity, reference, flags, close_rtol=.005, error_rtol=2e-5, refere
     metrics = {k: 0 for k in (
         'traces', 'reference_close_traces', 'approximate_traces', 'close_risk_traces',
         'ordinal_wrong', 'ordinal_missing', 'ordinary_missing', 'ordinary_spurious',
-        'close_cluster_missing', 'cluster_approximations', 'mode_index_shifts',
+        'close_cluster_missing', 'close_cluster_unmatched', 'cluster_approximations', 'mode_index_shifts',
         'beyond_reference_prefix', 'unflagged_uncertainty', 'unresolved_traces',
         'reference_unresolved_traces', 'unjudged_finite_cells', 'unjudged_reference_boundary')}
     metrics['max_matched_relative_error'] = 0.
     for b in range(velocity.shape[0]):
         for t in range(velocity.shape[2]):
-            x = velocity[b, :, t]
-            r = reference[b, :, t]
-            full = r[np.isfinite(r)]
-            finite = x[np.isfinite(x)]
+            x = velocity[b, :, t].tolist()
+            r = reference[b, :, t].tolist()
+            full = [v for v in r if math.isfinite(v)]
+            finite = [v for v in x if math.isfinite(v)]
             word = int(flags[b, t])
             marked = bool(word & (APPROXIMATE | CLOSE_RISK))
             metrics['traces'] += 1
@@ -52,7 +53,17 @@ def compare(velocity, reference, flags, close_rtol=.005, error_rtol=2e-5, refere
             for group in groups:
                 if prefix >= len(x):
                     break
-                hit = any(np.any(np.abs(finite-value) <= error_rtol*value) for value in group)
+                if len(group)>1:
+                    # Strict one-to-one matches inside the requested prefix.
+                    # A single returned velocity cannot certify two close roots.
+                    wanted=group[:len(x)-prefix];i=j=0;matched=0
+                    while i<len(wanted) and j<len(finite):
+                        value,actual=wanted[i],finite[j]
+                        if abs(actual-value)<=error_rtol*value:i+=1;j+=1;matched+=1
+                        elif actual<value:j+=1
+                        else:i+=1
+                    metrics['close_cluster_unmatched']+=len(wanted)-matched
+                hit = any(any(abs(actual-value)<=error_rtol*value for actual in finite) for value in group)
                 if len(group) == 1 and not hit:
                     if prefix==len(full)-1 and not complete:
                         metrics['unjudged_reference_boundary'] += 1
@@ -66,7 +77,7 @@ def compare(velocity, reference, flags, close_rtol=.005, error_rtol=2e-5, refere
                 if not len(full):
                     metrics['ordinary_spurious'] += 1
                     continue
-                nearest = int(np.argmin(np.abs(full-value)))
+                nearest = min(range(len(full)),key=lambda j:abs(full[j]-value))
                 relative = abs(value-full[nearest])/full[nearest]
                 if relative <= error_rtol:
                     metrics['max_matched_relative_error'] = max(metrics['max_matched_relative_error'], float(relative))
@@ -81,11 +92,11 @@ def compare(velocity, reference, flags, close_rtol=.005, error_rtol=2e-5, refere
                 else:
                     metrics['ordinary_spurious'] += 1
             for j in range(min(len(x), len(r))):
-                if np.isfinite(r[j]) and not np.isfinite(x[j]):
+                if math.isfinite(r[j]) and not math.isfinite(x[j]):
                     metrics['ordinal_missing'] += 1
-                if np.isfinite(r[j]) and np.isfinite(x[j]) and abs(x[j]-r[j]) > error_rtol*r[j]:
+                if math.isfinite(r[j]) and math.isfinite(x[j]) and abs(x[j]-r[j]) > error_rtol*r[j]:
                     metrics['ordinal_wrong'] += 1
-                    if len(full) and np.any(np.abs(full-x[j]) <= error_rtol*full):
+                    if len(full) and any(abs(value-x[j])<=error_rtol*value for value in full):
                         metrics['mode_index_shifts'] += 1
                     metrics['unflagged_uncertainty'] += not marked
     metrics['ordinary_failures'] = metrics['ordinary_missing'] + metrics['ordinary_spurious']

@@ -1,4 +1,4 @@
-# modisp 0.3.0
+# modisp 0.3.1
 
 modisp is an FP64, GPU-accelerated package for batched multimode Rayleigh/P–SV
 and Love phase-velocity calculations in 1-D layered elastic media. A portable
@@ -11,7 +11,7 @@ exploration and synthetic-data workflows. Units are km, km/s, g/cm³ and seconds
 Install the wheel matching your Python and platform, or build the CPU source:
 
 ```sh
-python -m pip install /path/to/modisp-0.3.0-<matching-tags>.whl
+python -m pip install /path/to/modisp-0.3.1-<matching-tags>.whl
 modisp doctor
 ```
 
@@ -19,11 +19,12 @@ CPU installation and import require no CUDA. CUDA support is provided by the
 separate `modisp-cuda12` wheel with exactly the same version. NumPy is the only
 Python runtime dependency. See [installation and deployment](docs/INSTALL.md).
 
-The current balanced/fast presets use a configurable observation-scale
-logarithmic grid (`close_root_rtol=0.005` by default). They allow flagged close
-clusters and uncertain recovered mode ranks to gain throughput; `high` retains
-the complete 0.2.1 schedule. See [current tolerance/performance results](docs/TOLERANT_PRESETS.md)
-for measured speed-ups and the full ordinary/close/unjudged error accounting.
+The default `shape_adaptive` search uses density seeds and local five-point
+integral consistency to refine difficult intervals and reuse samples. The
+implementation independently adapts Zhu et al. (2026) to the existing Dunkin/SH
+functions; their GRT validation does not establish this implementation's
+accuracy. See [0.3.1 methods and validation](docs/SHAPE_ADAPTIVE_0_3_1.md).
+`search_strategy="qe_adaptive"` retains the 0.3.0 path for comparisons.
 
 ## Unified dispersion interface
 
@@ -59,10 +60,12 @@ with Solver(backend="cpu", threads=4) as solver:
     print(solver.stats(), solver.last_result is result)
 ```
 
-`accuracy="balanced"` is the default: its relative velocity grid step is at
-most 0.25%; `fast` uses at most 0.5%. Both use FP64 evaluation and refinement,
-flag all approximate searches and expose `mode_index_uncertain` and
-`close_root_mask`. Select `high` for strict individual-root ordering:
+`accuracy="balanced"` is the default. Balanced/fast permit flagged ambiguity
+within a configurable close-root scale (`close_root_rtol=0.005`). Their local
+sampling is controlled separately by `sampling_rtol` (high `1e-3`, balanced
+`1e-2`, fast `5e-2`). All three use FP64 evaluation and refinement. Balanced/fast
+flag approximate searches and expose `mode_index_uncertain` and
+`close_root_mask`. Select `high` to search close roots individually:
 
 ```python
 with Solver(backend="cuda", accuracy="high") as exact:
@@ -167,8 +170,8 @@ Accuracy uses all 171 models / 6083 period traces with four requested modes.
 The independent judge is a stable two-grid FP64 reference (32769/65537 nodes).
 The current presets are checked against all 11 reference suites,
 plus the separate extreme witness fixtures. Ordinary errors, close-cluster omissions, ordinal shifts and unjudged values
-are reported separately in [current validation](docs/TOLERANT_PRESETS.md).
-The original 0.3.0 speed claims below/elsewhere are historical and do not apply
+are reported separately in [current validation](docs/SHAPE_ADAPTIVE_0_3_1.md).
+The superseded local 0.3.0 candidate speed claims below/elsewhere are historical and do not apply
 to the corrected execution path.
 
 | Solver | Wrong | Missing | Extra | Exceptions / unresolved | Max common abs error (km/s) |

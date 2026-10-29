@@ -21,7 +21,7 @@ jobs:
         run: |
           cp -R tests "$RUNNER_TEMP/modisp-tests"
           mkdir -p "$RUNNER_TEMP/tools"
-          cp tools/benchmark_modephys.py tools/benchmark_ab.py tools/tolerant_metrics.py "$RUNNER_TEMP/tools/"
+          cp tools/benchmark_modephys.py tools/benchmark_ab.py tools/tolerant_metrics.py tools/validate_shape_paper.py "$RUNNER_TEMP/tools/"
           cd "$RUNNER_TEMP"
           python -m pytest modisp-tests -q -rs
           modisp doctor

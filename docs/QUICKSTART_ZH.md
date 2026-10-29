@@ -6,7 +6,7 @@ P–SV/Scholte 型根及 Love 多模态相速度。
 ## 安装
 
 ```sh
-python -m pip install /path/to/modisp-0.3.0-<匹配标签>.whl
+python -m pip install /path/to/modisp-0.3.1-<匹配标签>.whl
 modisp doctor
 ```
 
@@ -14,7 +14,7 @@ CPU 使用不需要 CUDA。有 NVIDIA GPU 时，再安装版本完全一致的
 `modisp_cuda12` wheel。离线安装：
 
 ```sh
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.3.0
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.3.1
 ```
 
 从源码安装使用 `python -m pip install <CPU源码包.tar.gz>`，需要 C++17
@@ -77,22 +77,26 @@ with Solver(backend="auto", threads=8, chunk_size=100) as solver:
 
 ## 精度档位
 
-默认 `balanced` 使用相对速度步长不超过 0.25% 的对数网格，`fast` 不超过 0.5%；
+默认 `balanced` 和 `fast` 使用局部自适应采样，分别允许在不一致区间宽度达到近根尺度的 0.5 倍和 1 倍时停止细分；
 二者仍使用 FP64，但允许不可分辨近根簇发生遗漏或近似，换取更高速度。
 
 ```python
 with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solver:
     result = solver(thickness, vp, vs, rho, periods, nmodes=5)
-    approximate = result.approximate_search    # 所有观测网格结果均明确标记
+    approximate = result.approximate_search    # 所有近似搜索结果均明确标记
     uncertain_rank = result.mode_index_uncertain
     close = result.close_root_mask             # 已恢复根中的相邻近根
 ```
 
-`close_root_rtol=0.005` 表示 0.5%，可配置。`high` 保留完整严格搜索。
+`close_root_rtol=0.005` 表示 0.5%，可配置。`high` 逐根搜索，不按此阈值合并。
+0.3.1 默认 `search_strategy="shape_adaptive"`，用局部五点积分一致性决定细分。
+`sampling_rtol` 三档默认 `1e-3`／`1e-2`／`5e-2`，与速度精化容差和近根尺度分别管理。
+需要复现 0.3.0 时显式选择 `search_strategy="qe_adaptive"`。
+实现、独立验证和性能测量见 [0.3.1 升级说明](SHAPE_ADAPTIVE_0_3_1.md)。
 近似档的 `mode` 是恢复根的排序编号；遗漏近根簇后可能错位。`close_root_mask=False`
 不能证明没有漏掉近根。默认根精修容差为 high `1e-6`、balanced `1e-5`、fast `1e-4`；
-显式 `c_tol_rel` 仍优先。`search_level=6/7` 分别表示 balanced/fast 对数网格。
-详见[当前精度与速度报告](TOLERANT_PRESETS.md)。
+显式 `c_tol_rel` 仍优先。`search_level=8/9/10` 分别表示 high/balanced/fast 形状搜索；6/7 为旧路径的观测网格。
+详见[当前精度与速度报告](SHAPE_ADAPTIVE_0_3_1.md)。
 
 ## 诊断和编号
 
@@ -109,6 +113,7 @@ with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solve
 | 256 | 用户显式给定搜索边界 |
 | 512 | 密度反解未通过重新求值的间距检查 |
 | 1024 | 采样族结果出现分歧；结合最终状态判断 |
+| 8192 | 形状搜索回退到对应的 0.3.0 路径 |
 
 根按每个周期的相速度升序编号，不追踪跨周期物理分支。显式 `cmin/cmax`
 会裁切搜索谱，此时模式 0 仅表示窗口内首根。`root_count` 至多计入请求模态

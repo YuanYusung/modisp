@@ -22,13 +22,16 @@ def main(argv=None):
     forward.add_argument("--cmin",type=float)
     forward.add_argument("--cmax",type=float)
     forward.add_argument("--accuracy",choices=["high","balanced","fast"],default=None,
-                         help="search precision preset for qe_adaptive (default: balanced)")
+                         help="search precision preset (default: balanced)")
+    forward.add_argument("--search-strategy",choices=["shape_adaptive","qe_adaptive","uniform"],default="shape_adaptive")
+    forward.add_argument("--sampling-rtol",type=float)
     forward.add_argument("--close-root-rtol",type=float,default=.005)
     forward.add_argument("--c-tol-rel",type=float)
     args=parser.parse_args(argv)
     if args.command=="doctor":
         data=dict(version=__version__,python=sys.executable,cpu_module=_cpu.__file__,
-                  default_accuracy="balanced",sampling_capacity=2048)
+                  default_accuracy="balanced",default_search_strategy="shape_adaptive",
+                  private_abi=int(_cpu.ABI_VERSION),sampling_capacity=2048)
         try:
             module=_load_cuda();available=bool(module.available(0));data.update(cuda_module=module.__file__,cuda_available=available,auto_backend="cuda" if available else "cpu")
             if available:
@@ -39,7 +42,8 @@ def main(argv=None):
     with np.load(args.input,allow_pickle=False) as src:
         model={key:src[key] for key in ("thickness","vp","vs","rho")};periods=src["periods"]
     with Solver(backend=args.backend,threads=args.threads,device=args.device,cmin=args.cmin,cmax=args.cmax,
-                accuracy=args.accuracy,close_root_rtol=args.close_root_rtol,c_tol_rel=args.c_tol_rel) as solver:
+                accuracy=args.accuracy,close_root_rtol=args.close_root_rtol,c_tol_rel=args.c_tol_rel,
+                search_strategy=args.search_strategy,sampling_rtol=args.sampling_rtol) as solver:
         out=solver(**model,periods=periods,nmodes=args.nmodes,wave=args.wave)
         np.savez_compressed(args.output,phase_velocity=out.phase_velocity,periods=out.period,
                             mode_mask=out.mode_mask,status=out.status,trace_flags=out.trace_flags,
@@ -49,7 +53,8 @@ def main(argv=None):
                             approximate_search=out.approximate_search,close_root_mask=out.close_root_mask,
                             potentially_ambiguous=out.potentially_ambiguous,mode_index_uncertain=out.mode_index_uncertain,
                             close_root_risk=out.close_root_risk,
-                            close_root_rtol=np.asarray(out.close_root_rtol))
+                            close_root_rtol=np.asarray(out.close_root_rtol),search_strategy=np.asarray(out.search_strategy),
+                            sampling_rtol=np.asarray(np.nan if out.sampling_rtol is None else out.sampling_rtol))
     return 2 if np.any(out.trace_flags & 4) else 0
 
 

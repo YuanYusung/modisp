@@ -11,6 +11,11 @@ struct Medium {
   int L,wave; // wave=0: coupled P-SV; wave=1: SH
   // Optional per-trace constants. Never cached by Python object address.
   const double *ka=nullptr,*kb=nullptr,*gammk=nullptr;
+  // Experimental fast path: density reciprocals are model constants. The
+  // `secular` selector is 0 for the released recurrence and 1 for the fast
+  // recurrence.
+  const double *irho=nullptr,*irho2=nullptr;
+  int secular=0;
 };
 
 MD_HD bool sh_has_guide(const Medium &m) {
@@ -46,12 +51,25 @@ MD_HD double sh_secular(const Medium &m,double omega,double c,double *shape=null
 struct ShapeSample {double f,g;};
 MD_HD ShapeSample shape_evaluate(const Medium &m,double omega,double c){
   ShapeSample s;
-  s.f=m.wave?sh_secular(m,omega,c,&s.g):dunkin_secular<double,true>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,m.vs[0]==0.,false,m.ka,m.kb,m.gammk,&s.g);
+  if(m.wave){s.f=sh_secular(m,omega,c,&s.g);return s;}
+  const bool water=m.vs[0]==0.;
+  if(m.secular==1){
+    if(m.ka&&m.kb&&m.gammk&&m.irho&&m.irho2)
+      s.f=dunkin_secular_fast<double,true>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,water,false,m.ka,m.kb,m.gammk,m.irho,m.irho2,&s.g);
+    else
+      s.f=dunkin_secular_fast<double,false>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,water,false,nullptr,nullptr,nullptr,m.irho,m.irho2,&s.g);
+  }else s.f=dunkin_secular<double,true>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,water,false,m.ka,m.kb,m.gammk,&s.g);
   return s;
 }
 
 MD_HD double evaluate(const Medium &m,double omega,double c) {
   if(m.wave==1)return sh_secular(m,omega,c);
+  if(m.secular==1){
+    const bool water=m.vs[0]==0.;
+    if(m.ka&&m.kb&&m.gammk&&m.irho&&m.irho2)
+      return dunkin_secular_fast<double,true>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,water,false,m.ka,m.kb,m.gammk,m.irho,m.irho2);
+    return dunkin_secular_fast<double,false>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,water,false,nullptr,nullptr,nullptr,m.irho,m.irho2);
+  }
   return dunkin_secular<double,true>(m.h,m.vp,m.vs,m.rho,m.L,omega/c,omega,m.vs[0]==0.,false,m.ka,m.kb,m.gammk);
 }
 

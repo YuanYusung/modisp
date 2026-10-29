@@ -12,7 +12,7 @@ def load():
     return _cpu
 
 
-def secular_grid(thickness,vp,vs,rho,periods,cmin,cmax,nc,normalize=True,precision="float64",wave="rayleigh"):
+def secular_grid(thickness,vp,vs,rho,periods,cmin,cmax,nc,normalize=True,precision="float64",wave="rayleigh",method="dunkin"):
     from . import _models
     arrays=_models(thickness,vp,vs,rho)
     if arrays[0].shape[0]!=1:raise ValueError("secular_grid expects one model")
@@ -22,8 +22,11 @@ def secular_grid(thickness,vp,vs,rho,periods,cmin,cmax,nc,normalize=True,precisi
     if not isinstance(nc,(int,np.integer)) or nc<1 or not np.isfinite([cmin,cmax]).all() or not 0<cmin<=cmax:raise ValueError("invalid grid")
     if precision not in ("float32","float64"):raise ValueError("precision must be float32 or float64")
     if wave not in ("rayleigh","love"):raise ValueError("invalid wave")
+    if method not in ("dunkin","fast"):raise ValueError("method must be 'dunkin' or 'fast'")
+    if method=="fast" and (precision!="float64" or not normalize):
+        raise ValueError("method='fast' supports normalized float64 evaluation only")
     if precision=="float64" and normalize:
         c=np.linspace(cmin,cmax,nc)
-        return np.array([_cpu.secular(*arrays,p,c,int(wave=="love")) for p in t])
+        return np.array([_cpu.secular(*arrays,p,c,int(wave=="love"),0 if method=="dunkin" else 1) for p in t])
     if wave!="rayleigh":raise ValueError("raw precision probes support solid Rayleigh only")
     return _cpu.probe_grid(*arrays,t,float(cmin),float(cmax),int(nc),bool(normalize),precision=="float32")

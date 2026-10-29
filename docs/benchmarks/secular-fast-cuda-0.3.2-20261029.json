@@ -1,0 +1,57 @@
+{
+  "mode": "solver",
+  "backend": "cuda",
+  "modisp": "0.3.2",
+  "python": "/home/yuanys/modisp-0.3.2-bench/venv/bin/python",
+  "solver": {
+    "models": 1024,
+    "periods": 100,
+    "nmodes": 5,
+    "layers": 70,
+    "backend": "cuda",
+    "accuracy": "high",
+    "threads": 8,
+    "samples_seconds": {
+      "dunkin": [
+        6.128106288611889,
+        6.131082817912102,
+        6.122685298323631
+      ],
+      "fast": [
+        4.75212724506855,
+        4.599937550723553,
+        4.6019726768136024
+      ]
+    },
+    "median_seconds": {
+      "dunkin": 6.128106288611889,
+      "fast": 4.6019726768136024
+    },
+    "models_per_second": {
+      "dunkin": 167.09892938752404,
+      "fast": 222.51327244059513
+    },
+    "evaluations": {
+      "dunkin": 255763028,
+      "fast": 255763027
+    },
+    "speedup": 1.3316259610769743,
+    "comparison": {
+      "missing": 0,
+      "extra": 0,
+      "finite_common": 508154,
+      "max_abs_difference": 1.3045937308220346e-07,
+      "wrong": 0,
+      "root_count_equal": true,
+      "finite_mask_equal": true
+    }
+  },
+  "environment": {
+    "host": "yaolab-server",
+    "gpu": "NVIDIA A800 80GB PCIe x2",
+    "cuda": "12.6",
+    "python": "3.10.12",
+    "modisp": "0.3.2"
+  },
+  "note": "Final 0.3.2 CUDA wheel; paired/interleaved; a competing user process held unused GPU memory."
+}

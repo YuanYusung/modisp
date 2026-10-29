@@ -9,8 +9,8 @@ from . import _cpu
 from ._loader import BackendUnavailableError, CudaUnavailable, load as _load_cuda
 from .models import LayeredModel, CANONICAL_MODELS, random_model_batch, pad_batch, to_batch
 
-__version__ = "0.3.1"
-if _cpu.VERSION!=__version__ or _cpu.ABI_VERSION!=5:raise RuntimeError("CPU package and extension versions differ; reinstall a matching wheel")
+__version__ = "0.3.2"
+if _cpu.VERSION!=__version__ or _cpu.ABI_VERSION!=6:raise RuntimeError("CPU package and extension versions differ; reinstall a matching wheel")
 TRACE_UNRESOLVED_BRACKET=1
 TRACE_RELOCATED=2
 TRACE_SEARCH_UNCONVERGED=4
@@ -35,8 +35,9 @@ class SolveStatus(IntEnum):
 
 
 class DispersionBatch:
-    def __init__(self, velocity, periods, nmodes, wave, flags, levels, counts, bounds, backend, reason, accuracy=None, close_root_rtol=.005,search_strategy=None,sampling_rtol=None):
+    def __init__(self, velocity, periods, nmodes, wave, flags, levels, counts, bounds, backend, reason, accuracy=None, close_root_rtol=.005,search_strategy=None,sampling_rtol=None,secular=None):
         self.phase_velocity=velocity
+        self.secular=secular
         self.period=periods.copy()
         self.mode=np.arange(nmodes)
         self.wave=wave
@@ -108,9 +109,12 @@ class Solver:
     def __init__(self,nc=512,cmin=None,cmax=None,c_tol_rel=None,f_accept=1.,block=256,
                  search_strategy="shape_adaptive",workspace_bytes=256*1024**2,chunk_size=None,
                  *,backend="auto",device=0,threads=None,profile=False,accuracy=None,
-                 adaptive_period_threshold=None,close_root_rtol=.005,sampling_rtol=None):
+                 adaptive_period_threshold=None,close_root_rtol=.005,sampling_rtol=None,secular="dunkin"):
         if backend not in ("auto","cpu","cuda"):raise ValueError("backend must be auto, cpu or cuda")
         if search_strategy not in ("shape_adaptive","qe_adaptive","uniform"):raise ValueError("invalid search_strategy")
+        if secular not in ("dunkin","fast"):raise ValueError("secular must be 'dunkin' or 'fast'")
+        if secular=="fast" and search_strategy=="uniform":
+            raise NotImplementedError("secular='fast' is not available on the legacy uniform CUDA path")
         if accuracy is None:
             accuracy="balanced" if search_strategy!="uniform" else "uniform"
         elif accuracy not in ("high","balanced","fast"):
@@ -143,7 +147,7 @@ class Solver:
         self.block=int(block);self.search_strategy=search_strategy;self.workspace_bytes=int(workspace_bytes);self.chunk_size=chunk_size
         self.backend=backend;self.device=int(device);self.threads=int(threads)
         self.profile=bool(profile);self.sampling_rtol=float(sampling_rtol)
-        self.accuracy=accuracy;self.adaptive_period_threshold=adaptive_period_threshold;self.close_root_rtol=float(close_root_rtol)
+        self.accuracy=accuracy;self.adaptive_period_threshold=adaptive_period_threshold;self.close_root_rtol=float(close_root_rtol);self.secular=secular
         self._engine=None;self._engine_key=None;self._key=None;self._module=None;self._legacy=None;self._calls=0;self._last_stats=None
         self.last_result=None
         self._lock=threading.RLock()
@@ -181,6 +185,7 @@ class Solver:
         backend,reason=self._select()
         if self.profile:timings['backend_selection']=time.perf_counter()-selected
         if self.search_strategy=="uniform":
+            if self.secular=="fast":raise NotImplementedError("secular='fast' is not available on the legacy uniform CUDA path")
             if backend!="cuda" or wave!="rayleigh" or np.any(b==0) or L<2:raise NotImplementedError("uniform is the legacy CUDA solid-Rayleigh option; use qe_adaptive for this combination")
             if self._legacy is None:
                 from ._legacy import Solver as LegacySolver
@@ -188,8 +193,8 @@ class Solver:
             old=self._legacy(h,a,b,r,per,nmodes,wave)
             bounds=_cpu.bounds(h,a,b,r,0,.2 if self.cmin is None else self.cmin,self.cmax)
             flags=old.trace_flags.copy()|TRACE_RANGE_TRUNCATED
-            result=DispersionBatch(old.phase_velocity,per,nmodes,wave,flags,np.full((B,per.size),-2,dtype=np.int32),np.sum(old.mode_mask,axis=1,dtype=np.int32),bounds,backend,reason,accuracy="uniform",close_root_rtol=self.close_root_rtol,search_strategy="uniform")
-            self._last_stats=dict(self._legacy.stats(),accuracy="uniform",close_root_rtol=self.close_root_rtol);self._calls+=1;self.last_result=result
+            result=DispersionBatch(old.phase_velocity,per,nmodes,wave,flags,np.full((B,per.size),-2,dtype=np.int32),np.sum(old.mode_mask,axis=1,dtype=np.int32),bounds,backend,reason,accuracy="uniform",close_root_rtol=self.close_root_rtol,search_strategy="uniform",secular="dunkin")
+            self._last_stats=dict(self._legacy.stats(),accuracy="uniform",close_root_rtol=self.close_root_rtol,secular="dunkin",secular_kernel="dunkin");self._calls+=1;self.last_result=result
             return result
         stage=time.perf_counter() if self.profile else 0.
         bounds=_cpu.bounds(h,a,b,r,int(wave=="love"),self.cmin,self.cmax)
@@ -199,21 +204,21 @@ class Solver:
         if backend=="cpu":
             fixed=self.threads*(4*2048*16+5*(nmodes+2)*8+3*L*8
                                 +(72*50 if self.search_strategy=="shape_adaptive" else 0))+4096
-            cost=8*(6*L+2*(129+2*L)+(6*L+174 if self.search_strategy=="shape_adaptive" else 0))+per.size*(8*nmodes+12+16)
+            cost=8*(6*L+2*(129+2*L)+(6*L+174 if self.search_strategy=="shape_adaptive" else 0))+2*L*8+per.size*(8*nmodes+12+16)
             limit=(self.workspace_bytes-fixed)//cost
         else:
             fixed=4096+8*per.size
             cache_points=256
             # Conservatively reserve a compact shared queue for every trace,
             # even though only the resident persistent blocks use it at once.
-            cost=8*(6*L+2*1024+4)+(8*2048+4 if self.search_strategy=="shape_adaptive" else 0)+4+per.size*(64*(nmodes+2)+8*nmodes+48+2*cache_points*8+16+shape_queue_bytes)
+            cost=8*(6*L+2*1024+4)+2*L*8+(8*2048+4 if self.search_strategy=="shape_adaptive" else 0)+4+per.size*(64*(nmodes+2)+8*nmodes+48+2*cache_points*8+16+shape_queue_bytes)
             limit=(self.workspace_bytes-fixed)//cost
         capacity=min(B,limit,self.chunk_size or B)
         if capacity<1:raise MemoryError("workspace_bytes is too small for one model and the backend's fixed workspace; increase the budget or reduce threads")
         threshold=0. if self.adaptive_period_threshold is None else float(self.adaptive_period_threshold)
         resolved_threshold=(float(self.adaptive_period_threshold) if self.adaptive_period_threshold is not None
                             else (1.0 if self.accuracy=="balanced" else (0.63 if self.accuracy=="fast" else 0.0)))
-        key=(backend,self.device,self.threads,capacity,L,per.size,int(nmodes),self.accuracy,threshold,self.close_root_rtol,self.search_strategy,self.sampling_rtol)
+        key=(backend,self.device,self.threads,capacity,L,per.size,int(nmodes),self.accuracy,threshold,self.close_root_rtol,self.search_strategy,self.sampling_rtol,self.secular)
         # Preserve the high-water capacity for short tail batches. Never retain
         # an allocation that exceeds a subsequently reduced budget/chunk cap.
         compatible=(self._engine_key is not None and self._engine_key[:3]==key[:3]
@@ -224,8 +229,9 @@ class Solver:
         if allocated:
             self.close()
             code={"high":0,"balanced":1,"fast":2,"uniform":3}[self.accuracy]
-            self._engine=(_cpu.CpuSolver(self.threads,code,threshold,self.close_root_rtol,self.search_strategy=="shape_adaptive",self.sampling_rtol) if backend=="cpu"
-                          else self._module.QeSolver(capacity,L,per.size,int(nmodes),code,threshold,self.close_root_rtol,self.search_strategy=="shape_adaptive",self.sampling_rtol))
+            secular_code=0 if self.secular=="dunkin" else 1
+            self._engine=(_cpu.CpuSolver(self.threads,code,threshold,self.close_root_rtol,self.search_strategy=="shape_adaptive",self.sampling_rtol,secular_code) if backend=="cpu"
+                          else self._module.QeSolver(capacity,L,per.size,int(nmodes),code,threshold,self.close_root_rtol,self.search_strategy=="shape_adaptive",self.sampling_rtol,secular_code))
             self._engine_key=key
         else:capacity=self._engine_key[3]
         if self.profile:timings['engine_prepare']=time.perf_counter()-stage
@@ -251,7 +257,7 @@ class Solver:
             chunks+=1
         if self.cmin is not None or self.cmax is not None:flags|=TRACE_RANGE_TRUNCATED
         counts[(flags&TRACE_SEARCH_UNCONVERGED)!=0]=-1
-        stats.update(backend=backend,strategy=("shape_adaptive" if self.search_strategy=="shape_adaptive" else ("qe_adaptive" if self.accuracy=="high" else "observation_log")),requested_strategy=self.search_strategy,sampling_rtol=self.sampling_rtol,accuracy=self.accuracy,
+        stats.update(backend=backend,strategy=("shape_adaptive" if self.search_strategy=="shape_adaptive" else ("qe_adaptive" if self.accuracy=="high" else "observation_log")),requested_strategy=self.search_strategy,sampling_rtol=self.sampling_rtol,accuracy=self.accuracy,secular=self.secular,secular_kernel=("sh" if wave=="love" else "dunkin_fast" if self.secular=="fast" else "dunkin"),
                      period_threshold=resolved_threshold,early_acceptance_enabled=False,approximate_search_enabled=self.accuracy in ("balanced","fast"),velocity_step_rtol=(None if self.search_strategy=="shape_adaptive" else self.close_root_rtol*(.5 if self.accuracy=="balanced" else 1.) if self.accuracy!="high" else None),close_root_rtol=self.close_root_rtol,refinement_tolerance=self.c_tol_rel,chunks=chunks,threads=self.threads if backend=="cpu" else 0)
         stats.update(approximate_traces=int(np.count_nonzero(flags&TRACE_APPROXIMATE_SEARCH)),close_root_risk_traces=int(np.count_nonzero(flags&TRACE_CLOSE_ROOT_RISK)))
         stats['close_cluster_leaf_rtol']=self.close_root_rtol*(.5 if self.accuracy=="balanced" else 1.) if self.search_strategy=="shape_adaptive" and self.accuracy!="high" else None
@@ -261,7 +267,7 @@ class Solver:
         for k in ("rejected_sign","troughs","hidden_roots","relocated"):stats.setdefault(k,0)
         self._last_stats=stats;self._key=(B,L,per.size,self.nc,nmodes);self._calls+=1
         stage=time.perf_counter() if self.profile else 0.
-        result=DispersionBatch(velocity,per,nmodes,wave,flags,levels,counts,bounds,backend,reason,accuracy=self.accuracy,close_root_rtol=self.close_root_rtol,search_strategy=self.search_strategy,sampling_rtol=self.sampling_rtol if self.search_strategy=="shape_adaptive" else None)
+        result=DispersionBatch(velocity,per,nmodes,wave,flags,levels,counts,bounds,backend,reason,accuracy=self.accuracy,close_root_rtol=self.close_root_rtol,search_strategy=self.search_strategy,sampling_rtol=self.sampling_rtol if self.search_strategy=="shape_adaptive" else None,secular=self.secular)
         if self.profile:
             timings['result_packaging']=time.perf_counter()-stage
             timings['solver_total']=time.perf_counter()-started
@@ -279,11 +285,13 @@ class Solver:
         return result
     def kernel_report(self):
         backend=self.last_result.backend_used if self.last_result is not None else self.backend
-        if backend=="cuda" and self.search_strategy=="uniform":return {"backend":"cuda","precision":"float32 scan / float64 refinement","accuracy":"uniform","legacy":self._legacy.kernel_report()}
+        if backend=="cuda" and self.search_strategy=="uniform":return {"backend":"cuda","precision":"float32 scan / float64 refinement","accuracy":"uniform","secular":"dunkin","secular_kernel":"dunkin","legacy":self._legacy.kernel_report()}
+        secular_kernel=("sh" if self.last_result is not None and self.last_result.wave=="love"
+                        else "dunkin_fast" if self.secular=="fast" else "dunkin")
         resolved=(float(self.adaptive_period_threshold) if self.adaptive_period_threshold is not None
                   else (1.0 if self.accuracy=="balanced" else (0.63 if self.accuracy=="fast" else 0.0)))
-        if backend=="cuda" and self._key is not None:return dict(self._module.qe_kernel_report(self._key[1],int(self.accuracy!="high"),self.search_strategy=="shape_adaptive"),backend=backend,precision="float64",accuracy=self.accuracy,period_threshold=resolved,sampling_capacity=2048,cache_points_per_trace=256,close_root_rtol=self.close_root_rtol,refinement_tolerance=self.c_tol_rel)
-        return {"backend":backend,"precision":"float64","accuracy":self.accuracy,"period_threshold":resolved,"close_root_rtol":self.close_root_rtol,"refinement_tolerance":self.c_tol_rel,"search_kernel":"shape_adaptive" if self.search_strategy=="shape_adaptive" else ("qe_adaptive" if self.accuracy=="high" else "observation_log"),"threads":self.threads,"module":_cpu.__file__}
+        if backend=="cuda" and self._key is not None:return dict(self._module.qe_kernel_report(self._key[1],int(self.accuracy!="high"),self.search_strategy=="shape_adaptive"),backend=backend,precision="float64",accuracy=self.accuracy,secular=self.secular,secular_kernel=secular_kernel,period_threshold=resolved,sampling_capacity=2048,cache_points_per_trace=256,close_root_rtol=self.close_root_rtol,refinement_tolerance=self.c_tol_rel)
+        return {"backend":backend,"precision":"float64","accuracy":self.accuracy,"secular":self.secular,"secular_kernel":secular_kernel,"period_threshold":resolved,"close_root_rtol":self.close_root_rtol,"refinement_tolerance":self.c_tol_rel,"search_kernel":"shape_adaptive" if self.search_strategy=="shape_adaptive" else ("qe_adaptive" if self.accuracy=="high" else "observation_log"),"threads":self.threads,"module":_cpu.__file__}
     def close(self):
         with self._lock:
             if self._engine is not None and hasattr(self._engine,"close"):self._engine.close()

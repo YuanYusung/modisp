@@ -1,0 +1,62 @@
+{
+  "mode": "solver",
+  "backend": "cuda",
+  "modisp": "0.3.2",
+  "python": "/home/yuanys/modisp-0.3.2-bench/venv/bin/python",
+  "protocol": "warmup then alternating paired samples; crossing locations are grid nodes",
+  "pointwise_backend": "cpu",
+  "seed": 20261029,
+  "profile": false,
+  "environment": {
+    "platform": "Linux-6.8.0-57-generic-x86_64-with-glibc2.35",
+    "machine": "x86_64",
+    "python": "3.10.12",
+    "cpu_count": 128
+  },
+  "solver": {
+    "models": 1024,
+    "periods": 100,
+    "nmodes": 5,
+    "layers": 70,
+    "backend": "cuda",
+    "accuracy": "high",
+    "threads": 8,
+    "samples_seconds": {
+      "dunkin": [
+        6.159545607864857,
+        6.153917104005814,
+        6.14724687486887
+      ],
+      "fast": [
+        4.741542100906372,
+        4.7898091077804565,
+        4.740088231861591
+      ]
+    },
+    "median_seconds": {
+      "dunkin": 6.153917104005814,
+      "fast": 4.741542100906372
+    },
+    "models_per_second": {
+      "dunkin": 166.3980815298016,
+      "fast": 215.96349419828135
+    },
+    "evaluations": {
+      "dunkin": 255763028,
+      "fast": 255763027
+    },
+    "speedup": 1.297872500769203,
+    "comparison": {
+      "missing": 0,
+      "extra": 0,
+      "finite_common": 508154,
+      "max_abs_difference": 1.3045937308220346e-07,
+      "wrong": 0,
+      "root_count_equal": true,
+      "finite_mask_equal": true,
+      "accepted": true
+    }
+  },
+  "accepted": true,
+  "note": "Reviewed sm_80 build; CUDA_VISIBLE_DEVICES=1 on shared A800 host. Other user allocations occupied about 21 GiB before this run; timings are not an uncontended-device guarantee."
+}

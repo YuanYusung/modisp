@@ -1,4 +1,4 @@
-# modisp 0.3.1
+# modisp 0.3.2
 
 modisp is an FP64, GPU-accelerated package for batched multimode Rayleigh/P–SV
 and Love phase-velocity calculations in 1-D layered elastic media. A portable
@@ -11,7 +11,7 @@ exploration and synthetic-data workflows. Units are km, km/s, g/cm³ and seconds
 Install the wheel matching your Python and platform, or build the CPU source:
 
 ```sh
-python -m pip install /path/to/modisp-0.3.1-<matching-tags>.whl
+python -m pip install /path/to/modisp-0.3.2-<matching-tags>.whl
 modisp doctor
 ```
 
@@ -25,6 +25,16 @@ implementation independently adapts Zhu et al. (2026) to the existing Dunkin/SH
 functions; their GRT validation does not establish this implementation's
 accuracy. See [0.3.1 methods and validation](docs/SHAPE_ADAPTIVE_0_3_1.md).
 `search_strategy="qe_adaptive"` retains the 0.3.0 path for comparisons.
+
+An opt-in `Solver(secular="fast")` evaluator keeps the same FP64 Dunkin algebra
+but removes per-layer density divisions, uses one reciprocal normalization and
+contracts the 5-vector without materializing `5x5` entries. It is experimental:
+the default `secular="dunkin"` arithmetic is unchanged and passes the retained
+bitwise frozen-fixture checks. Fixed-node CPU measurements show 1.03–1.19× faster function
+evaluation and 1.07–1.10× full-solver throughput on the documented Apple-silicon
+workload; a generic x86-64 Linux build measured about 1.06× solver throughput,
+and an A800 1,024-model high-preset run improved from 6.13 s to 4.60 s (1.33×).
+The gains are workload- and ISA-dependent. See [0.3.2 methods and measurements](docs/SECULAR_FAST_0_3_2.md).
 
 ## Unified dispersion interface
 
@@ -60,7 +70,9 @@ with Solver(backend="cpu", threads=4) as solver:
     print(solver.stats(), solver.last_result is result)
 ```
 
-`accuracy="balanced"` is the default. Balanced/fast permit flagged ambiguity
+`secular="dunkin"` is the default. `secular="fast"` selects the experimental
+evaluator; it changes FP64 rounding but not the model, sampling policy or root
+acceptance rules; rounding can change the actual adaptive sampling path. `accuracy="balanced"` is the default. Balanced/fast permit flagged ambiguity
 within a configurable close-root scale (`close_root_rtol=0.005`). Their local
 sampling is controlled separately by `sampling_rtol` (high `1e-3`, balanced
 `1e-2`, fast `5e-2`). All three use FP64 evaluation and refinement. Balanced/fast

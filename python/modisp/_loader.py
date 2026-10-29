@@ -1,8 +1,8 @@
 """Import installed extensions; CPU imports never require a CUDA runtime."""
 import importlib
 
-ABI_VERSION = 5
-VERSION = "0.3.1"
+ABI_VERSION = 6
+VERSION = "0.3.2"
 
 
 class BackendUnavailableError(RuntimeError):

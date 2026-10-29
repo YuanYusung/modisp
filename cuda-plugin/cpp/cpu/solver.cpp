@@ -55,7 +55,7 @@ class Pool {
 
 struct Model {
   md::Medium view;
-  std::vector<double> ia,ib,tx,tn,sx;
+  std::vector<double> ia,ib,irho,irho2,tx,tn,sx;
   double seed,water_seed;
 };
 struct BracketRoot { double lo,hi,root; };
@@ -369,10 +369,10 @@ bool search_observation(const Model &model,double period,double lo,double hi,int
 class CpuSolver {
   int threads_;Pool pool;std::vector<Scratch> work;
   std::vector<Model> models;md::AccuracyPolicy policy_;
-  bool shape_;double sampling_rtol_;
+  bool shape_;double sampling_rtol_;int secular_;
  public:
-  CpuSolver(int threads,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001):threads_(threads),pool(threads),work(threads),
-    policy_(md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol)),shape_(shape),sampling_rtol_(sampling_rtol){if(threads<1||threads>256)throw py::value_error("threads must be 1..256");}
+  CpuSolver(int threads,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001,int secular=0):threads_(threads),pool(threads),work(threads),
+    policy_(md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol)),shape_(shape),sampling_rtol_(sampling_rtol),secular_(secular){if(threads<1||threads>256)throw py::value_error("threads must be 1..256");if(secular<0||secular>1)throw py::value_error("secular must be 0 (dunkin) or 1 (fast)");}
   py::tuple run(Array h,Array vp,Array vs,Array rho,Array periods,Array bounds,int modes,int wave,bool automatic,double tol,double accept,bool profile=false){
     if(h.ndim()!=2||h.shape(0)<1||h.shape(1)<1)throw py::value_error("model must be [B,L]");
     int B=h.shape(0),L=h.shape(1),nf=periods.size(),K=modes+2;
@@ -392,10 +392,10 @@ class CpuSolver {
         w.ka.resize(L);w.kb.resize(L);w.gammk.resize(L);}
       auto stage_start=profile?Clock::now():Clock::time_point{};
       pool.run(B,[&](size_t i,int){
-        auto &q=models[i];q.ia.resize(L);q.ib.resize(L);const size_t off=i*L;
+        auto &q=models[i];q.ia.resize(L);q.ib.resize(L);q.irho.resize(L);q.irho2.resize(L);const size_t off=i*L;
         q.tx.clear();q.tn.clear();q.tx.reserve(129+2*L);q.tn.reserve(129+2*L);
-        for(int j=0;j<L;++j){q.ia[j]=1./(vp.data()[off+j]*vp.data()[off+j]);q.ib[j]=vs.data()[off+j]==0.?0.:1./(vs.data()[off+j]*vs.data()[off+j]);}
-        q.view={h.data()+off,vp.data()+off,vs.data()+off,rho.data()+off,q.ia.data(),q.ib.data(),L,wave};
+        for(int j=0;j<L;++j){const double rj=rho.data()[off+j];q.ia[j]=1./(vp.data()[off+j]*vp.data()[off+j]);q.ib[j]=vs.data()[off+j]==0.?0.:1./(vs.data()[off+j]*vs.data()[off+j]);q.irho[j]=1./rj;q.irho2[j]=q.irho[j]*q.irho[j];}
+        q.view={h.data()+off,vp.data()+off,vs.data()+off,rho.data()+off,q.ia.data(),q.ib.data(),L,wave,nullptr,nullptr,nullptr,q.irho.data(),q.irho2.data(),secular_};
         const int top=q.view.vs[0]==0.?1:0;
         q.seed=wave?q.view.vs[top]:md::rayleigh_reference(q.view.vp[top],q.view.vs[top]);
         q.water_seed=(!wave&&top)?md::scholte_reference(q.view.vp[0],q.view.rho[0],q.view.vp[1],q.view.vs[1],q.view.rho[1]):NAN;
@@ -426,6 +426,7 @@ class CpuSolver {
         const double omega=md::two_pi<double>()/period;
         for(int j=0;j<L;++j){w.ka[j]=omega/model.view.vp[j];w.kb[j]=model.view.vs[j]==0.?0.:omega/model.view.vs[j];const double z=model.view.vs[j]/omega;w.gammk[j]=2.*z*z;}
         w.medium=model.view;w.medium.ka=w.ka.data();w.medium.kb=w.kb.data();w.medium.gammk=w.gammk.data();
+        w.medium.irho=model.irho.data();w.medium.irho2=model.irho2.data();w.medium.secular=secular_;
         if(hi>lo&&model.view.wave&&!md::sh_has_guide(model.view)){for(int m=0;m<modes;++m)output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=NAN;flags.mutable_data()[t]=0;levels.mutable_data()[t]=-3;counts.mutable_data()[t]=0;++w.stats[12];return;}
         if(hi<=lo){for(int m=0;m<modes;++m)output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=NAN;flags.mutable_data()[t]=0;levels.mutable_data()[t]=-4;counts.mutable_data()[t]=0;++w.stats[13];return;}
         bool shifted_companion=false;
@@ -520,8 +521,8 @@ class CpuSolver {
 };
 
 PYBIND11_MODULE(_cpu,m){
-  m.attr("ABI_VERSION")=5;m.attr("VERSION")="0.3.1";
-  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double,double,bool,double>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
+  m.attr("ABI_VERSION")=6;m.attr("VERSION")="0.3.2";
+  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double,double,bool,double,int>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001,py::arg("secular")=0).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
   m.def("bounds",[](Array h,Array vp,Array vs,Array rho,int wave,py::object low,py::object high){
     int B=h.shape(0),L=h.shape(1);py::array_t<double> result({B,2});
     const bool auto_low=low.is_none(),auto_hi=high.is_none();double given_low=auto_low?0.:low.cast<double>(),given_hi=auto_hi?0.:high.cast<double>();
@@ -532,15 +533,25 @@ PYBIND11_MODULE(_cpu,m){
     }
     return result;
   });
-  m.def("secular",[](Array h,Array vp,Array vs,Array rho,double period,Array velocity,int wave){
-    py::array_t<double> out(velocity.size());md::Medium v{h.data(),vp.data(),vs.data(),rho.data(),nullptr,nullptr,static_cast<int>(h.size()),wave};
+  m.def("secular",[](Array h,Array vp,Array vs,Array rho,double period,Array velocity,int wave,int method){
+    const int L=static_cast<int>(h.size());
+    std::vector<double> irho,irho2;
+    if(method==1){irho.resize(L);irho2.resize(L);for(int j=0;j<L;++j){irho[j]=1./rho.data()[j];irho2[j]=irho[j]*irho[j];}}
+    py::array_t<double> out(velocity.size());
+    md::Medium v{h.data(),vp.data(),vs.data(),rho.data(),nullptr,nullptr,L,wave,nullptr,nullptr,nullptr,
+                 method==1?irho.data():nullptr,method==1?irho2.data():nullptr,method};
     py::gil_scoped_release release;for(py::ssize_t j=0;j<velocity.size();++j)out.mutable_data()[j]=md::evaluate(v,md::two_pi<double>()/period,velocity.data()[j]);return out;
-  });
-  m.def("secular_shape",[](Array h,Array vp,Array vs,Array rho,double period,Array velocity,int wave){
-    py::array_t<double> out(velocity.size()),feature(velocity.size());md::Medium v{h.data(),vp.data(),vs.data(),rho.data(),nullptr,nullptr,static_cast<int>(h.size()),wave};
+  },py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("period"),py::arg("velocity"),py::arg("wave"),py::arg("method")=0);
+  m.def("secular_shape",[](Array h,Array vp,Array vs,Array rho,double period,Array velocity,int wave,int method){
+    const int L=static_cast<int>(h.size());
+    std::vector<double> irho,irho2;
+    if(method==1){irho.resize(L);irho2.resize(L);for(int j=0;j<L;++j){irho[j]=1./rho.data()[j];irho2[j]=irho[j]*irho[j];}}
+    py::array_t<double> out(velocity.size()),feature(velocity.size());
+    md::Medium v{h.data(),vp.data(),vs.data(),rho.data(),nullptr,nullptr,L,wave,nullptr,nullptr,nullptr,
+                 method==1?irho.data():nullptr,method==1?irho2.data():nullptr,method};
     {py::gil_scoped_release release;for(py::ssize_t j=0;j<velocity.size();++j){const auto s=md::shape_evaluate(v,md::two_pi<double>()/period,velocity.data()[j]);out.mutable_data()[j]=s.f;feature.mutable_data()[j]=s.g;}}
     return py::make_tuple(out,feature);
-  });
+  },py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("period"),py::arg("velocity"),py::arg("wave"),py::arg("method")=0);
   m.def("md_dunkin_point",[](Array h,Array vp,Array vs,Array rho,int L,double period,double c,int normalize){if(L<1||h.size()!=L||vp.size()!=L||vs.size()!=L||rho.size()!=L||!(period>0)||!(c>0))throw py::value_error("invalid point geometry");return md_dunkin_point(h.data(),vp.data(),vs.data(),rho.data(),L,period,c,normalize);});
   m.def("probe_grid",[](Array h,Array vp,Array vs,Array rho,Array periods,double lo,double hi,int nc,bool normalize,bool fp32){
     int L=h.size();if(h.ndim()!=1||L<1||L>256||vp.size()!=L||vs.size()!=L||rho.size()!=L||periods.ndim()!=1||periods.size()<1||nc<1||hi<lo||!(lo>0)||(fp32&&L>64))throw py::value_error("invalid probe geometry");

@@ -117,15 +117,17 @@ def test_budget_and_failed_work_diagnostics(accuracy):
     assert s.last_result is out
 
 
-def test_cli_npz(tmp_path,capsys):
+@pytest.mark.parametrize("secular", ["dunkin", "fast"])
+def test_cli_npz(tmp_path,capsys,secular):
     source=tmp_path/'input.npz';target=tmp_path/'output.npz'
     np.savez(source,thickness=[0.],vp=[6.],vs=[3.5],rho=[2.7],periods=[1.,2.])
     assert main(['doctor'])==0
     assert 'cpu_module' in capsys.readouterr().out
-    assert main(['forward',str(source),'--output',str(target),'--backend',BACKEND,'--nmodes','1'])==0
+    assert main(['forward',str(source),'--output',str(target),'--backend',BACKEND,'--nmodes','1','--secular',secular])==0
     out=np.load(target)
     assert out['phase_velocity'].shape==(1,1,2)
     assert out['status'].dtype==np.uint8
+    assert str(out['secular'])==secular
 
 
 def test_functional_conveniences_and_input_validation():

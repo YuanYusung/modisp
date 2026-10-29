@@ -6,7 +6,7 @@ P–SV/Scholte 型根及 Love 多模态相速度。
 ## 安装
 
 ```sh
-python -m pip install /path/to/modisp-0.3.1-<匹配标签>.whl
+python -m pip install /path/to/modisp-0.3.2-<匹配标签>.whl
 modisp doctor
 ```
 
@@ -14,7 +14,7 @@ CPU 使用不需要 CUDA。有 NVIDIA GPU 时，再安装版本完全一致的
 `modisp_cuda12` wheel。离线安装：
 
 ```sh
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.3.1
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.3.2
 ```
 
 从源码安装使用 `python -m pip install <CPU源码包.tar.gz>`，需要 C++17
@@ -89,14 +89,17 @@ with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solve
 ```
 
 `close_root_rtol=0.005` 表示 0.5%，可配置。`high` 逐根搜索，不按此阈值合并。
-0.3.1 默认 `search_strategy="shape_adaptive"`，用局部五点积分一致性决定细分。
+0.3.2 默认 `search_strategy="shape_adaptive"`，用局部五点积分一致性决定细分。
+实验性的 `secular="fast"` 保持相同 FP64 Dunkin 代数，只优化标量运算；默认
+`secular="dunkin"` 不变。固定节点 CPU 测量约 1.03–1.19× 函数加速、1.07–1.10×
+求解器加速，A800 1,024 模型约 1.33×，详见 [0.3.2 说明](SECULAR_FAST_0_3_2.md)。
 `sampling_rtol` 三档默认 `1e-3`／`1e-2`／`5e-2`，与速度精化容差和近根尺度分别管理。
 需要复现 0.3.0 时显式选择 `search_strategy="qe_adaptive"`。
-实现、独立验证和性能测量见 [0.3.1 升级说明](SHAPE_ADAPTIVE_0_3_1.md)。
+实现、独立验证和性能测量见 [0.3.1 形状自适应说明](SHAPE_ADAPTIVE_0_3_1.md) 和 [0.3.2 快速频散函数说明](SECULAR_FAST_0_3_2.md)。
 近似档的 `mode` 是恢复根的排序编号；遗漏近根簇后可能错位。`close_root_mask=False`
 不能证明没有漏掉近根。默认根精修容差为 high `1e-6`、balanced `1e-5`、fast `1e-4`；
 显式 `c_tol_rel` 仍优先。`search_level=8/9/10` 分别表示 high/balanced/fast 形状搜索；6/7 为旧路径的观测网格。
-详见[当前精度与速度报告](SHAPE_ADAPTIVE_0_3_1.md)。
+详见[当前精度与速度报告](SECULAR_FAST_0_3_2.md) 与 [0.3.1 验证](SHAPE_ADAPTIVE_0_3_1.md)。
 
 ## 诊断和编号
 

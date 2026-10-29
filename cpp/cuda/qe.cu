@@ -60,9 +60,9 @@ const char *stat_names[NSTATS] = {
     "shape_accepted","shape_subdivisions","shape_reused","shape_depth_limit","shape_work_limit","legacy_fallbacks"};
 
 struct Device {
-  double *d, *a, *b, *r, *period, *bounds, *ia, *ib, *tx, *tn, *seeds, *cache_x, *cache_y;
+  double *d, *a, *b, *r, *period, *bounds, *ia, *ib, *irho, *irho2, *tx, *tn, *seeds, *cache_x, *cache_y;
   int *nt, *cache_n, *queue, *next_queue, *queue_n, *next_n, *cursor;
-  int wave, automatic, guarded, profile;
+  int wave, automatic, guarded, profile, secular;
   int accuracy, accept_level1, accept_level2, verify_safe_skip, allow_dense_early;
   int shape;double sampling_rtol;double *shape_x;int *shape_n;
   double close_root_rtol;
@@ -86,7 +86,8 @@ __device__ void add_sampling_stat(unsigned long long *address,unsigned long long
 
 __device__ md::Medium medium(Device st,int model,int L) {
   const size_t o=static_cast<size_t>(model)*L;
-  return {st.d+o,st.a+o,st.b+o,st.r+o,st.ia+o,st.ib+o,L,st.wave};
+  return {st.d+o,st.a+o,st.b+o,st.r+o,st.ia+o,st.ib+o,L,st.wave,
+          nullptr,nullptr,nullptr,st.irho+o,st.irho2+o,st.secular};
 }
 
 __device__ void sort_pairs(double *x, double *y, int count) {
@@ -130,7 +131,7 @@ __device__ void merge_pairs(double *x,double *y,int oldn,int extra) {
 __global__ void prepare_models(Device st,int B,int L) {
   const int model=blockIdx.x;const size_t off=static_cast<size_t>(model)*L;
   __shared__ double x[TABLE],y[TABLE];
-  for(int j=threadIdx.x;j<L;j+=blockDim.x){st.ia[off+j]=1./(st.a[off+j]*st.a[off+j]);st.ib[off+j]=st.b[off+j]==0.?0.:1./(st.b[off+j]*st.b[off+j]);}
+  for(int j=threadIdx.x;j<L;j+=blockDim.x){st.ia[off+j]=1./(st.a[off+j]*st.a[off+j]);st.ib[off+j]=st.b[off+j]==0.?0.:1./(st.b[off+j]*st.b[off+j]);st.irho[off+j]=1./st.r[off+j];st.irho2[off+j]=st.irho[off+j]*st.irho[off+j];}
   __syncthreads();
   const double lo=st.bounds[2*model],hi=st.bounds[2*model+1];
   for(int j=threadIdx.x;j<TABLE;j+=blockDim.x){
@@ -236,7 +237,7 @@ __device__ void adaptive_one(Device st,int L,int nf,int K,double delta,double to
   // grid/range is retained for both independent dense fallback resolutions.
   if(st.guarded&&lev>0&&st.prev_count[t]==K&&!(st.flags[t]&(WORKSPACE|NONFINITE|REFINE_FAILED|512u)))upper=fmin(upper,st.previous[static_cast<size_t>(t)*K+K-1]*(1.+4.*tol));
   const double cmin=(st.automatic && lev<2)?fmin((lev==0?4.:2.)*st.bounds[2*(t/nf)],(st.bounds[2*(t/nf)]+upper)*.5):st.bounds[2*(t/nf)];
-  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr};
+  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr,st.irho+off,st.irho2+off,st.secular};
   if (!(upper>cmin)) { if (!threadIdx.x) st.count[t]=0; return; }
   const double nlo=md::density_base(med,cmin)/per;
   const double nhi=md::density_base(med,upper)/per;
@@ -357,7 +358,7 @@ __device__ void dense_one(Device st,int L,int nf,int K,int floor_cells,int facto
   if (!threadIdx.x) { nr=0; bad=0; st.status[t]=0; atomicAdd(&st.stats[SEARCHES],1ULL); }
   __syncthreads();
   const double cmin=st.bounds[2*(t/nf)],upper=st.bounds[2*(t/nf)+1];
-  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr};
+  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr,st.irho+off,st.irho2+off,st.secular};
   if (!(upper>cmin)) { if (!threadIdx.x) st.count[t]=0; return; }
   // Scale dense fallback with the density estimate and water optical thickness,
   // with a 32768-cell floor and an explicit workspace limit.
@@ -412,7 +413,7 @@ __device__ void observation_one(Device st,int L,int nf,int K,int modes,double to
   }
   if(!threadIdx.x){nr=0;bad=0;st.flags[t]|=2048u;atomicAdd(&st.stats[SEARCHES],1ULL);}
   __syncthreads();
-  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr};
+  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr,st.irho+off,st.irho2+off,st.secular};
   const double lower=st.bounds[2*(t/nf)],upper=st.bounds[2*(t/nf)+1];
   const double target=st.close_root_rtol*(st.accuracy==1?.5:1.);
   const double origin=log(lower),span=log(upper)-origin,need=ceil(span/log1p(target));
@@ -722,8 +723,10 @@ class Solver {
     check(cudaGetLastError());
   }
  public:
-  Solver(int B,int L,int nf,int modes,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001):B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2){
+  Solver(int B,int L,int nf,int modes,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001,int secular=0):B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2){
     if(B<1||L<1||nf<1||modes<1||L>256||modes>256)throw py::value_error("QE geometry requires B,nf,modes>=1, 1<=L<=256, modes<=256");
+    if(secular<0||secular>1)throw py::value_error("secular must be 0 (dunkin) or 1 (fast)");
+    st_.secular=secular;
     const md::AccuracyPolicy policy=md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol);
     st_.close_root_rtol=policy.close_root_rtol;
     st_.shape=shape;st_.sampling_rtol=sampling_rtol;
@@ -746,6 +749,7 @@ class Solver {
       auto allocate=[&](auto *&ptr,size_t count){alloc(ptr,count);device_bytes_+=count*sizeof(*ptr);};
       allocate(st_.d,models);allocate(st_.a,models);allocate(st_.b,models);allocate(st_.r,models);
       allocate(st_.period,nf);allocate(st_.bounds,2*B);allocate(st_.ia,models);allocate(st_.ib,models);
+      allocate(st_.irho,models);allocate(st_.irho2,models);
       allocate(st_.tx,static_cast<size_t>(B)*TABLE);allocate(st_.tn,static_cast<size_t>(B)*TABLE);allocate(st_.nt,B);allocate(st_.seeds,2*B);
       if(shape){allocate(st_.shape_x,static_cast<size_t>(B)*CAP);allocate(st_.shape_n,B);}
       allocate(st_.cache_x,tr*CACHE);allocate(st_.cache_y,tr*CACHE);allocate(st_.cache_n,tr);
@@ -773,7 +777,7 @@ class Solver {
     if(stream_)cudaStreamSynchronize(stream_);
     for(auto &e:events_){if(e.begin)cudaEventDestroy(e.begin);if(e.end)cudaEventDestroy(e.end);}events_.clear();
 #define QE_FREE(name) if(st_.name){cudaFree(st_.name);st_.name=nullptr;}
-    QE_FREE(d) QE_FREE(a) QE_FREE(b) QE_FREE(r) QE_FREE(period) QE_FREE(bounds) QE_FREE(ia) QE_FREE(ib)
+    QE_FREE(d) QE_FREE(a) QE_FREE(b) QE_FREE(r) QE_FREE(period) QE_FREE(bounds) QE_FREE(ia) QE_FREE(ib) QE_FREE(irho) QE_FREE(irho2)
     QE_FREE(tx) QE_FREE(tn) QE_FREE(nt) QE_FREE(seeds) QE_FREE(cache_x) QE_FREE(cache_y) QE_FREE(cache_n)
     QE_FREE(queue) QE_FREE(next_queue) QE_FREE(queue_n) QE_FREE(next_n) QE_FREE(cursor)
     QE_FREE(lo) QE_FREE(hi) QE_FREE(flo) QE_FREE(fhi) QE_FREE(roots) QE_FREE(previous) QE_FREE(output)
@@ -832,7 +836,7 @@ void bind_qe(py::module_ &m) {
   m.def("memory_info",[](){size_t free,total;qe::check(cudaMemGetInfo(&free,&total));return py::make_tuple(free,total);});
   m.def("qe_kernel_report",[](int L,int accuracy,bool shape){const void *kernel=shape?reinterpret_cast<const void*>(qe::shape_search):accuracy==0?reinterpret_cast<const void*>(qe::search<true>):reinterpret_cast<const void*>(qe::observation_search);cudaFuncAttributes a;qe::check(cudaFuncGetAttributes(&a,kernel));py::dict d;d["registers_per_thread"]=a.numRegs;d["static_shared_bytes"]=a.sharedSizeBytes;d["local_bytes_per_thread"]=a.localSizeBytes;int block=qe::env_integer("MODISP_CUDA_BLOCK",shape?32:256,shape?32:128,256),active=0;qe::check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&active,kernel,block,(shape?(md::shape_storage_doubles+(MD_TRACE_CONSTANTS?9:6)*L):(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L))*sizeof(double)));d["search_block_threads"]=block;d["max_active_blocks_per_sm"]=active;d["configured_blocks_per_sm"]=qe::env_integer("MODISP_CUDA_BLOCKS_PER_SM",shape?12:2,1,shape?16:8);d["dynamic_shared_bytes"]=(shape?(md::shape_storage_doubles+(MD_TRACE_CONSTANTS?9:6)*L):(2*qe::CAP+(MD_TRACE_CONSTANTS?9:6)*L))*sizeof(double);d["cache_points_per_trace"]=qe::CACHE;d["table_capacity_per_model"]=qe::TABLE;d["search_kernel"]=shape?"shape_warp":(accuracy==0?"qe_adaptive":"observation_log");return d;},py::arg("L"),py::arg("accuracy")=0,py::arg("shape")=false);
   py::class_<qe::Solver>(m,"QeSolver")
-    .def(py::init<int,int,int,int,int,double,double,bool,double>(),py::arg("B"),py::arg("L"),py::arg("nf"),py::arg("nmodes"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001)
+    .def(py::init<int,int,int,int,int,double,double,bool,double,int>(),py::arg("B"),py::arg("L"),py::arg("nf"),py::arg("nmodes"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001,py::arg("secular")=0)
     .def("run",&qe::Solver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),
          py::arg("periods"),py::arg("bounds"),py::arg("c_tol_rel")=1e-6,py::arg("f_accept")=1.0,py::arg("wave")=0,py::arg("automatic")=false,py::arg("profile")=false)
     .def("close",&qe::Solver::close);

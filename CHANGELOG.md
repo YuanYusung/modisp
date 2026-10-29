@@ -1,5 +1,36 @@
 # Changes
 
+## 0.3.2 — 2026-10-29
+
+- Add the opt-in `Solver(secular="fast")` evaluator. It is the same FP64
+  Dunkin compound-matrix algebra with precomputed density reciprocals, one
+  reciprocal normalization per layer, a fused 5-vector contraction, explicit
+  FMA and `exp2` for evanescent factors. The default `secular="dunkin"` path is
+  unchanged and passes the retained bitwise frozen-fixture checks.
+- Measure the function and the solver separately. On the 70-layer CPU
+  workloads the fixed-node secular evaluation improved 1.03–1.19x with zero
+  sign mismatches and identical zero-crossing grid intervals;
+  the full 32-model/100-period/5-mode high-preset solver improved 1.07–1.10x
+  with zero wrong/missing/extra cells. A 1,024-model A800 run improved from 6.128 s
+  to 4.602 s (1.33x); a generic x86-64 Linux build improved 1.06x. See
+  `docs/SECULAR_FAST_0_3_2.md`.
+- Keep `secular` out of `search_strategy="uniform"` (legacy CUDA path) and
+  reject unknown values. `wave="love"` continues to use the SH recurrence.
+- Record the requested `secular` in `DispersionBatch`, `stats()`,
+  `kernel_report()` and CLI NPZs; `modisp doctor` lists supported evaluators.
+  Stats and kernel reports identify the actual `sh` kernel for Love waves.
+- Reject unsupported fast precision probes instead of silently using Dunkin;
+  include `secular` in streaming benchmark resume identities. Fixed-node
+  benchmarks warm up and alternate evaluators, reject nonfinite/crossing
+  mismatches and consume model density constants without requiring frequency
+  constants.
+- Bump the private extension ABI to 6; CPU and CUDA wheels must match.
+- Document the Buchen–Ben-Hador fast-delta and Xi et al. five-scalar
+  formulations. A naive component transcription is not used: those vectors
+  need a different Plücker/minor normalization. The paper kernels remain a
+  research track and are not presented as validated replacements.
+
+
 ## 0.3.1 — 2026-10-29
 
 - Default to local shape-adaptive sampling: density/critical/interface seeds,

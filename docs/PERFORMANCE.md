@@ -1,7 +1,18 @@
 # Performance measurement and ModePhys workflow
 
+> For 0.3.2 see [the fast-secular report](SECULAR_FAST_0_3_2.md).
 > For 0.3.1 use [the shape-adaptive validation report](SHAPE_ADAPTIVE_0_3_1.md).
 > The 0.3.0 results below describe the retained `qe_adaptive` path.
+
+## 0.3.2 experimental fast secular evaluator
+
+`secular="fast"` keeps the released FP64 dispersion algebra but removes scalar
+overhead. On the documented fixed-node CPU workload it improved function
+evaluation 1.03–1.19×; the full 32-model/100-period/5-mode high-preset CPU run
+improved 1.07–1.10×. On an A800, 1,024 models at the same preset improved from
+6.128 s to 4.602 s (1.33×). Root sets were equal in both comparisons. The
+default `secular="dunkin"` path is unchanged. Protocol and caveats are in
+[the 0.3.2 report](SECULAR_FAST_0_3_2.md).
 
 
 ## 0.3.0 observation-scale presets

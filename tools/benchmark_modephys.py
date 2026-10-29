@@ -214,6 +214,12 @@ def make_solver(md, args):
     accuracy = getattr(args, "accuracy", None)
     if accuracy is not None and "accuracy" in inspect.signature(md.Solver).parameters:
         options["accuracy"] = accuracy
+    strategy = getattr(args, "search_strategy", None)
+    if strategy is not None and "search_strategy" in inspect.signature(md.Solver).parameters:
+        options["search_strategy"] = strategy
+    secular = getattr(args, "secular", None)
+    if secular is not None and "secular" in inspect.signature(md.Solver).parameters:
+        options["secular"] = secular
     # A pre-0.3.0 installation has only its exact default path; passing a
     # preset to it is intentionally ignored so the same A/B command can pair
     # the old and new packages.
@@ -259,7 +265,9 @@ def run(args):
                   models=n, periods=periods.tolist(), nmodes=5, convention="A",
                   backend=args.backend, threads=args.threads, workspace_bytes=args.workspace_bytes,
                   chunk=args.chunk, native_chunk=args.native_chunk, profile=args.profile,
-                  accuracy=getattr(args, "accuracy", None), environment=env)
+                  accuracy=getattr(args, "accuracy", None),
+                  search_strategy=getattr(args, "search_strategy", None),
+                  secular=getattr(args, "secular", None), environment=env)
     identity = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     out = args.output.resolve()
     checkpoint = out / "checkpoint.json"
@@ -431,6 +439,8 @@ def main():
         p.add_argument("--models", type=int, default=0)
         p.add_argument("--profile", action="store_true")
         p.add_argument("--accuracy", choices=("high", "balanced", "fast"))
+        p.add_argument("--search-strategy", choices=("shape_adaptive", "qe_adaptive", "uniform"))
+        p.add_argument("--secular", choices=("dunkin", "fast"))
         p.add_argument("--guard-gpu", action="store_true", help="reject observed competing GPU compute")
         if command == "run":
             p.add_argument("--chunk", type=int, default=1024)

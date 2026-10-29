@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import modisp as md
 p=argparse.ArgumentParser();p.add_argument('--backend',default='cpu');args=p.parse_args()
-with md.Solver(backend=args.backend) as s:
+with md.Solver(backend=args.backend, accuracy="high") as s:
     half=s([0.],[6.],[3.5],[2.7],[1.,3.],nmodes=2)
     ratio=(3.5/6.)**2
     x=next(x.real for x in np.roots([1.,-8.,24.-16*ratio,-16*(1-ratio)]) if abs(x.imag)<1e-10 and 0<x.real<1)

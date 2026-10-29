@@ -1,0 +1,567 @@
+{
+  "mode": "both",
+  "backend": "cpu",
+  "modisp": "0.3.2",
+  "python": "/Users/yusong/workspace/Test/modisp/.venv-dev/bin/python",
+  "protocol": "warmup then alternating paired samples; crossing locations are grid nodes",
+  "pointwise_backend": "cpu",
+  "seed": 20261029,
+  "profile": false,
+  "environment": {
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.12.12",
+    "cpu_count": 10
+  },
+  "pointwise": [
+    {
+      "model": "canonical_0",
+      "period": 1.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          0.09196375007741153,
+          0.0924806660041213,
+          0.09383158304262906
+        ],
+        "1": [
+          0.07924708293285221,
+          0.07951779093127698,
+          0.08014379197265953
+        ]
+      },
+      "median_seconds": {
+        "0": 0.0924806660041213,
+        "1": 0.07951779093127698
+      },
+      "ns_per_eval": {
+        "0": 92.4806660041213,
+        "1": 79.51779093127698
+      },
+      "mevals_per_second": {
+        "0": 10.813070917497893,
+        "1": 12.575802072573257
+      },
+      "speedup": 1.163018551207584,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 8.215650382226158e-15,
+      "max_scaled_difference": 8.215650382226158e-15,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 21,
+        "1": 21
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "canonical_0",
+      "period": 10.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          0.09877995797432959,
+          0.09998604201246053,
+          0.09896008297801018
+        ],
+        "1": [
+          0.08796383300796151,
+          0.08784666704013944,
+          0.08705645799636841
+        ]
+      },
+      "median_seconds": {
+        "0": 0.09896008297801018,
+        "1": 0.08784666704013944
+      },
+      "ns_per_eval": {
+        "0": 98.96008297801018,
+        "1": 87.84666704013944
+      },
+      "mevals_per_second": {
+        "0": 10.105084493736824,
+        "1": 11.383471151421986
+      },
+      "speedup": 1.1265092497225049,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 7.882583474838611e-15,
+      "max_scaled_difference": 7.882583474838611e-15,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 3,
+        "1": 3
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "canonical_3",
+      "period": 1.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          0.09604974999092519,
+          0.10646991699468344,
+          0.09963654191233218
+        ],
+        "1": [
+          0.08177629101555794,
+          0.08152570796664804,
+          0.08855524996761233
+        ]
+      },
+      "median_seconds": {
+        "0": 0.09963654191233218,
+        "1": 0.08177629101555794
+      },
+      "ns_per_eval": {
+        "0": 99.63654191233218,
+        "1": 81.77629101555794
+      },
+      "mevals_per_second": {
+        "0": 10.036478392434336,
+        "1": 12.22848318970287
+      },
+      "speedup": 1.2184037778550794,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 3.6029512706647893e-13,
+      "max_scaled_difference": 3.6029512706647893e-13,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 18,
+        "1": 18
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "canonical_3",
+      "period": 10.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          0.09947645803913474,
+          0.09726329101249576,
+          0.09815020801033825
+        ],
+        "1": [
+          0.08700812503229827,
+          0.08580862497910857,
+          0.08723499998450279
+        ]
+      },
+      "median_seconds": {
+        "0": 0.09815020801033825,
+        "1": 0.08700812503229827
+      },
+      "ns_per_eval": {
+        "0": 98.15020801033825,
+        "1": 87.00812503229827
+      },
+      "mevals_per_second": {
+        "0": 10.188465417156008,
+        "1": 11.493179512014427
+      },
+      "speedup": 1.1280579598043738,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 1.6764367671839864e-14,
+      "max_scaled_difference": 1.6764367671839864e-14,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 3,
+        "1": 3
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "canonical_7",
+      "period": 1.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          0.06944379105698317,
+          0.06929954199586064,
+          0.07012733398005366
+        ],
+        "1": [
+          0.060197875020094216,
+          0.0605650000507012,
+          0.06049304106272757
+        ]
+      },
+      "median_seconds": {
+        "0": 0.06944379105698317,
+        "1": 0.06049304106272757
+      },
+      "ns_per_eval": {
+        "0": 69.44379105698317,
+        "1": 60.49304106272757
+      },
+      "mevals_per_second": {
+        "0": 14.400135487698742,
+        "1": 16.530827057662076
+      },
+      "speedup": 1.1479633001914091,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 9.103828801926284e-15,
+      "max_scaled_difference": 9.103828801926284e-15,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 10,
+        "1": 10
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "canonical_7",
+      "period": 10.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          0.07275254197884351,
+          0.07338270894251764,
+          0.07283470802940428
+        ],
+        "1": [
+          0.06395570805761963,
+          0.06366716593038291,
+          0.0638104589888826
+        ]
+      },
+      "median_seconds": {
+        "0": 0.07283470802940428,
+        "1": 0.0638104589888826
+      },
+      "ns_per_eval": {
+        "0": 72.83470802940428,
+        "1": 63.810458988882594
+      },
+      "mevals_per_second": {
+        "0": 13.729717974516866,
+        "1": 15.671412114027033
+      },
+      "speedup": 1.1414227257336282,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 9.547918011776346e-15,
+      "max_scaled_difference": 9.547918011776346e-15,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 1,
+        "1": 1
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "water_two_layer",
+      "period": 1.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          0.03372000006493181,
+          0.034517457941547036,
+          0.03416437504347414
+        ],
+        "1": [
+          0.028967165970243514,
+          0.028966667014174163,
+          0.029678332968614995
+        ]
+      },
+      "median_seconds": {
+        "0": 0.03416437504347414,
+        "1": 0.028967165970243514
+      },
+      "ns_per_eval": {
+        "0": 34.16437504347414,
+        "1": 28.967165970243514
+      },
+      "mevals_per_second": {
+        "0": 29.27025589455393,
+        "1": 34.52184452656669
+      },
+      "speedup": 1.1794172435981294,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 3.552713678800501e-15,
+      "max_scaled_difference": 3.552713678800501e-15,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 3,
+        "1": 3
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "water_two_layer",
+      "period": 10.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          0.03130979195702821,
+          0.031228624982759356,
+          0.03114441700745374
+        ],
+        "1": [
+          0.02800808404572308,
+          0.027938749990426004,
+          0.027659625047817826
+        ]
+      },
+      "median_seconds": {
+        "0": 0.031228624982759356,
+        "1": 0.027938749990426004
+      },
+      "ns_per_eval": {
+        "0": 31.228624982759356,
+        "1": 27.938749990426004
+      },
+      "mevals_per_second": {
+        "0": 32.02190299931804,
+        "1": 35.79258199964845
+      },
+      "speedup": 1.1177531204316844,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 3.4416913763379853e-15,
+      "max_scaled_difference": 3.350481073481989e-15,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 1,
+        "1": 1
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "random_70_solid",
+      "period": 1.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          1.5853017920162529,
+          1.5849722089478746,
+          1.5680062919855118
+        ],
+        "1": [
+          1.350187666947022,
+          1.3456559589831159,
+          1.4089492089115083
+        ]
+      },
+      "median_seconds": {
+        "0": 1.5849722089478746,
+        "1": 1.350187666947022
+      },
+      "ns_per_eval": {
+        "0": 1584.9722089478746,
+        "1": 1350.187666947022
+      },
+      "mevals_per_second": {
+        "0": 0.6309258890184662,
+        "1": 0.7406377827914475
+      },
+      "speedup": 1.1738903026212169,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 3.579636587147661e-13,
+      "max_scaled_difference": 3.579636587147661e-13,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 308,
+        "1": 308
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "random_70_solid",
+      "period": 10.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          1.5768864590208977,
+          1.6336202080128714,
+          1.5830198749899864
+        ],
+        "1": [
+          1.3665774170076475,
+          1.3681191250216216,
+          1.3707202080404386
+        ]
+      },
+      "median_seconds": {
+        "0": 1.5830198749899864,
+        "1": 1.3681191250216216
+      },
+      "ns_per_eval": {
+        "0": 1583.0198749899864,
+        "1": 1368.1191250216216
+      },
+      "mevals_per_second": {
+        "0": 0.6317040081422386,
+        "1": 0.7309305028421381
+      },
+      "speedup": 1.1570775132355295,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 7.771561172376096e-14,
+      "max_scaled_difference": 7.771561172376096e-14,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 32,
+        "1": 32
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "random_70_water",
+      "period": 1.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          1.5373080000281334,
+          1.5696735830279067,
+          1.5587594580138102
+        ],
+        "1": [
+          1.322069458081387,
+          1.3229699999792501,
+          1.349979625083506
+        ]
+      },
+      "median_seconds": {
+        "0": 1.5587594580138102,
+        "1": 1.3229699999792501
+      },
+      "ns_per_eval": {
+        "0": 1558.7594580138102,
+        "1": 1322.9699999792501
+      },
+      "mevals_per_second": {
+        "0": 0.641535802627438,
+        "1": 0.755875038750451
+      },
+      "speedup": 1.178227365728821,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 4.238276396506535e-13,
+      "max_scaled_difference": 3.7966426876512307e-13,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 301,
+        "1": 301
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    },
+    {
+      "model": "random_70_water",
+      "period": 10.0,
+      "evaluations": 1000000,
+      "samples_seconds": {
+        "0": [
+          1.5949669999536127,
+          1.5806698329979554,
+          1.6031944589922205
+        ],
+        "1": [
+          1.4009495419450104,
+          1.3746041669510305,
+          1.3575832500355318
+        ]
+      },
+      "median_seconds": {
+        "0": 1.5949669999536127,
+        "1": 1.3746041669510305
+      },
+      "ns_per_eval": {
+        "0": 1594.9669999536127,
+        "1": 1374.6041669510305
+      },
+      "mevals_per_second": {
+        "0": 0.6269722195061613,
+        "1": 0.7274821538029169
+      },
+      "speedup": 1.160310028370831,
+      "all_finite": true,
+      "finite_mask_equal": true,
+      "max_abs_difference": 5.762057497804562e-14,
+      "max_scaled_difference": 4.7884796073459865e-14,
+      "sign_mismatches_away_from_zero": 0,
+      "crossings": {
+        "0": 31,
+        "1": 31
+      },
+      "crossing_count_equal": true,
+      "max_crossing_node_difference": 0.0,
+      "accepted": true
+    }
+  ],
+  "solver": {
+    "models": 32,
+    "periods": 100,
+    "nmodes": 5,
+    "layers": 70,
+    "backend": "cpu",
+    "accuracy": "high",
+    "threads": 8,
+    "samples_seconds": {
+      "dunkin": [
+        2.0998068749904633,
+        2.1094810840440914,
+        2.2357663749717176
+      ],
+      "fast": [
+        1.9155282910214737,
+        1.9044865000760183,
+        2.1174525839742273
+      ]
+    },
+    "median_seconds": {
+      "dunkin": 2.1094810840440914,
+      "fast": 1.9155282910214737
+    },
+    "models_per_second": {
+      "dunkin": 15.169607465098819,
+      "fast": 16.705574201118008
+    },
+    "evaluations": {
+      "dunkin": 7812821,
+      "fast": 7812820
+    },
+    "speedup": 1.1012528992297945,
+    "comparison": {
+      "missing": 0,
+      "extra": 0,
+      "finite_common": 15883,
+      "max_abs_difference": 3.552713678800501e-15,
+      "wrong": 0,
+      "root_count_equal": true,
+      "finite_mask_equal": true,
+      "accepted": true
+    }
+  },
+  "accepted": true
+}

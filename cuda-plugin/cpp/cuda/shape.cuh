@@ -84,7 +84,7 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
     atomicAdd(&st.stats[SEARCHES],1ULL);if(!exact)st.flags[t]|=2048u;
   }
   __syncthreads();
-  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr};
+  const md::Medium med{h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,MD_TRACE_CONSTANTS?gammk:nullptr,st.irho+off,st.irho2+off,st.secular};
   unsigned long long evals=0;
   while(!bad&&!finished){
     // All lanes must finish the loop-condition read before the leader can

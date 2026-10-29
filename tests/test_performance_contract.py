@@ -109,6 +109,10 @@ def test_streaming_complete_resume_and_corruption(tmp_path):
     assert np.load(args.output / "periods.npy").dtype == np.float64
     assert all((args.output / f"{name}.npy").exists() for name in ATTRS)
     args.resume = True
+    args.secular = "fast"
+    with pytest.raises(ValueError, match="configuration"):
+        driver.run(args)
+    args.secular = None
     driver.run(args)
     data = np.load(args.output / "phase_velocity.npy", mmap_mode="r+")
     data[0, 0, 0] += .1

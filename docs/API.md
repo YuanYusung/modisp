@@ -65,6 +65,7 @@ reuse their native thread pool or device allocation across compatible calls.
 | `search_strategy` | `"shape_adaptive"` | Local shape consistency; `"qe_adaptive"` retains 0.3.0; `"uniform"` is legacy CUDA solid Rayleigh only |
 | `sampling_rtol` | preset | Shape-integral consistency tolerance: high `1e-3`, balanced `1e-2`, fast `5e-2`; explicit values apply only to shape search |
 | `accuracy` | `"balanced"` | Search/accuracy preset: `"high"`, `"balanced"` or `"fast"` (see below) |
+| `secular` | `"dunkin"` | Experimental evaluator: `"dunkin"` (released reference) or `"fast"` (same FP64 algebra, different scalar mechanics; not bitwise) |
 | `close_root_rtol` | `0.005` | Relative close-root scale; permits flagged balanced/fast close-cluster ambiguity |
 | `adaptive_period_threshold` | preset | Compatibility metadata only; shape decisions do not depend on this threshold |
 | `workspace_bytes` | `256*1024**2` | Native work-buffer budget, excluding inputs/results and CUDA context |
@@ -123,12 +124,16 @@ close-cluster, ordinal-shift and explicitly unjudged counts.
   `TRACE_RANGE_TRUNCATED`, separating user cropping from numerical failures.
 - `search_bounds`: `[B,2]`, determined before chunking.
 - `accuracy`: the preset used (`"high"`, `"balanced"`, `"fast"` or `"uniform"`).
+- `secular`: `"dunkin"` or the experimental `"fast"` evaluator.
 - `approximate_search`, `mode_index_uncertain`, `close_root_risk`,
   `potentially_ambiguous`: `[B,T]` quality arrays.
 - `close_root_mask`: `[B,nmodes,T]`, observed adjacent recovered roots within
   `close_root_rtol`. It cannot locate pairs missed by both samples.
 - `close_root_rtol`: the configured relative observation scale.
 - `search_strategy`, `sampling_rtol`: search configuration (sampling tolerance is `None` for legacy strategies).
+- `secular` is also reported in `stats()` and `kernel_report()`; the legacy
+  `uniform` path rejects `secular="fast"`. Love waves use the SH recurrence and
+  are unaffected by this selector; their actual `secular_kernel` is `"sh"`.
 - `backend_used`, `backend_reason`, `wave`, `mode_convention`.
 
 `SolveStatus` values are `VALID=0`, `NOT_FOUND=1`, `UNRESOLVED=2` and

@@ -31,6 +31,7 @@ template<class T> MD_HD T shape_small(){if constexpr(sizeof(T)==8)return T(1e-30
 #define MD_SIN(x) sin(x)
 #define MD_COS(x) cos(x)
 #define MD_EXP(x) exp(x)
+#define MD_EXP2(x) exp2(x)
 #define MD_SINCOS(x, sp, cp) sincos((x), (sp), (cp))
 #else
 #define MD_FABS(x) std::fabs(x)
@@ -39,8 +40,34 @@ template<class T> MD_HD T shape_small(){if constexpr(sizeof(T)==8)return T(1e-30
 #define MD_SIN(x) std::sin(x)
 #define MD_COS(x) std::cos(x)
 #define MD_EXP(x) std::exp(x)
+#define MD_EXP2(x) std::exp2(x)
 #define MD_SINCOS(x, sp, cp) \
   do { *(sp) = std::sin(x); *(cp) = std::cos(x); } while (0)
+#endif
+
+// The experimental fast path may use a combined sin/cos entry point. The
+// default path keeps separate calls so its floating-point results stay
+// reproducible against the released 0.3.x baselines.
+#ifdef __CUDACC__
+#define MD_SINCOS_FAST(x, sp, cp) sincos((x), (sp), (cp))
+#elif defined(__APPLE__)
+#define MD_SINCOS_FAST(x, sp, cp) __sincos((x), (sp), (cp))
+#elif defined(__linux__)
+#define MD_SINCOS_FAST(x, sp, cp) sincos((x), (sp), (cp))
+#else
+#define MD_SINCOS_FAST(x, sp, cp) MD_SINCOS((x), (sp), (cp))
+#endif
+
+// Explicit FMA for the experimental fast path. The released path keeps
+// -ffp-contract=off and therefore remains reproducible. On a generic x86-64
+// build without -mfma, std::fma can lower to a libm call; use ordinary
+// multiply/add there to avoid that function-call overhead.
+#if defined(__CUDACC__)
+#define MD_FMA(a, b, c) fma((a), (b), (c))
+#elif defined(__FMA__) || defined(__ARM_FEATURE_FMA) || defined(__aarch64__)
+#define MD_FMA(a, b, c) std::fma((a), (b), (c))
+#else
+#define MD_FMA(a, b, c) ((a) * (b) + (c))
 #endif
 
 // Eigenfunction products, following disba/_cps/_surf96.py.
@@ -51,7 +78,7 @@ struct VarOut {
   T cpcq, cpy, cpz, cqw, cqx, xy, xz, wy, wz;
 };
 
-template <typename T>
+template <typename T, bool FAST = false>
 MD_HD VarOut<T> dunkin_var(T p, T q, T ra, T rb, T wvno, T xka, T xkb, T dpth) {
   VarOut<T> o;
   T cosp = T(0), w = T(0), x = T(0);
@@ -61,7 +88,11 @@ MD_HD VarOut<T> dunkin_var(T p, T q, T ra, T rb, T wvno, T xka, T xkb, T dpth) {
   // --- P-wave eigenfunctions: c < vp, c == vp, or c > vp ---
   if (wvno < xka) {
     T sinp, cosp_pair;
-    MD_SINCOS(p, &sinp, &cosp_pair);
+    if constexpr (FAST) {
+      MD_SINCOS_FAST(p, &sinp, &cosp_pair);
+    } else {
+      MD_SINCOS(p, &sinp, &cosp_pair);
+    }
     w = sinp / ra;
     x = -ra * sinp;
     cosp = cosp_pair;
@@ -71,7 +102,10 @@ MD_HD VarOut<T> dunkin_var(T p, T q, T ra, T rb, T wvno, T xka, T xkb, T dpth) {
     x = T(0);
   } else {
     pex = p;
-    const T fac = (p < T(16)) ? MD_EXP(-T(2) * p) : T(0);
+    const T fac = (p < T(16))
+                      ? (FAST ? MD_EXP2(-T(2) * p * T(1.4426950408889634074L))
+                              : MD_EXP(-T(2) * p))
+                      : T(0);
     cosp = (T(1) + fac) * T(0.5);
     const T sinp = (T(1) - fac) * T(0.5);
     w = sinp / ra;
@@ -81,7 +115,11 @@ MD_HD VarOut<T> dunkin_var(T p, T q, T ra, T rb, T wvno, T xka, T xkb, T dpth) {
   // --- S-wave eigenfunctions ---
   if (wvno < xkb) {
     T sinq, cosq_pair;
-    MD_SINCOS(q, &sinq, &cosq_pair);
+    if constexpr (FAST) {
+      MD_SINCOS_FAST(q, &sinq, &cosq_pair);
+    } else {
+      MD_SINCOS(q, &sinq, &cosq_pair);
+    }
     y = sinq / rb;
     z = -rb * sinq;
     cosq = cosq_pair;
@@ -91,7 +129,10 @@ MD_HD VarOut<T> dunkin_var(T p, T q, T ra, T rb, T wvno, T xka, T xkb, T dpth) {
     z = T(0);
   } else {
     sex = q;
-    const T fac = (q < T(16)) ? MD_EXP(-T(2) * q) : T(0);
+    const T fac = (q < T(16))
+                      ? (FAST ? MD_EXP2(-T(2) * q * T(1.4426950408889634074L))
+                              : MD_EXP(-T(2) * q))
+                      : T(0);
     cosq = (T(1) + fac) * T(0.5);
     const T sinq = (T(1) - fac) * T(0.5);
     y = sinq / rb;
@@ -176,6 +217,66 @@ MD_HD void dunkin_dnka(T wvno2, T gam, T gammk, T rho, const VarOut<T> &v,
   ca[2][2] = a0 + T(2) * (cpcq - ca[0][0]);
   ca[2][3] = t * ca[1][2];
   ca[2][4] = t * ca[0][2];
+}
+
+// ---------------------------------------------------------------------------
+// Experimental fast application of the same compound matrix.
+//
+// This is algebraically identical to `dunkin_dnka` followed by the 5x5
+// mat-vec, but it does not materialize `ca`: the 15 distinct entries are
+// formed once and contracted with `e` directly.  The reciprocal density is
+// supplied by the caller (or computed once here), so the four per-layer
+// divisions disappear.  The caller owns normalization.
+// ---------------------------------------------------------------------------
+template <typename T>
+MD_HD void dunkin_apply_fast(T wvno2, T gam, T gammk, T rhol,
+                             const VarOut<T> &v, T irho, T irho2,
+                             const T e[5], T ee[5]) {
+  const T a0 = v.a0;
+  const T cpcq = v.cpcq, cpy = v.cpy, cpz = v.cpz;
+  const T cqw = v.cqw, cqx = v.cqx;
+  const T xy = v.xy, xz = v.xz, wy = v.wy, wz = v.wz;
+
+  const T gamm1 = gam - T(1);
+  const T twgm1 = gam + gamm1;
+  const T gmgmk = gam * gammk;
+  const T gmgm1 = gam * gamm1;
+  const T gm1sq = gamm1 * gamm1;
+  const T rho2 = rhol * rhol;
+  const T a0pq = a0 - cpcq;
+  const T wvno4 = wvno2 * wvno2;
+  const T t = -T(2) * wvno2;
+
+  // Distinct entries of the compound matrix, in the row/column layout used by
+  // dunkin_dnka:
+  //   [A D I C L; E B G M C; tJ tH K tG tI; F N H B D; O F J E A].
+  const T A = cpcq - T(2) * gmgm1 * a0pq - gmgmk * xz - wvno2 * gm1sq * wy;
+  const T D = (wvno2 * cpy - cqx) * irho;
+  const T I = -(twgm1 * a0pq + gammk * xz + wvno2 * gamm1 * wy) * irho;
+  const T C = (cpz - wvno2 * cqw) * irho;
+  const T L = -(T(2) * wvno2 * a0pq + xz + wvno4 * wy) * irho2;
+  const T E = (gmgmk * cpz - gm1sq * cqw) * rhol;
+  const T B = cpcq;
+  const T G = gammk * cpz - gamm1 * cqw;
+  const T M = -wz;
+  const T N = -xy;
+  const T F = (gm1sq * cpy - gmgmk * cqx) * rhol;
+  const T H = gamm1 * cpy - gammk * cqx;
+  const T O = -(T(2) * gmgmk * gm1sq * a0pq + gmgmk * gmgmk * xz +
+                gm1sq * gm1sq * wy) * rho2;
+  const T J = -(gammk * gamm1 * twgm1 * a0pq + gam * gammk * gammk * xz +
+                gamm1 * gm1sq * wy) * rhol;
+  const T K = a0 + T(2) * (cpcq - A);
+
+  const T e0 = e[0], e1 = e[1], e2 = e[2], e3 = e[3], e4 = e[4];
+  const T e2t = e2 * t;
+  // Explicit FMA keeps the fast path independent of the translation unit's
+  // -ffp-contract setting; the baseline path remains contract-off.
+  ee[0] = MD_FMA(A, e0, MD_FMA(E, e1, MD_FMA(F, e3, MD_FMA(O, e4, J * e2t))));
+  ee[1] = MD_FMA(D, e0, MD_FMA(B, e1, MD_FMA(N, e3, MD_FMA(F, e4, H * e2t))));
+  ee[2] = MD_FMA(I, e0, MD_FMA(G, e1, MD_FMA(K, e2, MD_FMA(H, e3, J * e4))));
+  ee[3] = MD_FMA(C, e0, MD_FMA(M, e1, MD_FMA(B, e3, MD_FMA(E, e4, G * e2t))));
+  ee[4] = MD_FMA(L, e0, MD_FMA(C, e1, MD_FMA(D, e3, MD_FMA(A, e4, I * e2t))));
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +378,113 @@ MD_HD T dunkin_secular(const T *d, const T *a, const T *b, const T *rho,
   // remain unchanged. A smooth positive L2 scale retains variation when the maximum component
   // normalization would return an exactly saturated +/-1 plateau.
   if(shape){T other=shape_small<T>();for(int i=1;i<5;++i)other+=e[i]*e[i];*shape=e[0]/MD_SQRT(e[0]*e[0]+other);}
+  return e[0];
+}
+
+// ---------------------------------------------------------------------------
+// Experimental fast Rayleigh secular function.
+//
+// Same boundary conditions and same return value as `dunkin_secular`, but:
+//   * density reciprocals are prepared once per model;
+//   * the compound matrix is contracted without materializing `ca`;
+//   * max-normalization uses one reciprocal and five multiplications.
+// No FP32 or approximation is introduced.
+// ---------------------------------------------------------------------------
+template <typename T, bool PREPARED>
+MD_HD T dunkin_secular_fast(const T *d, const T *a, const T *b, const T *rho,
+                            int nlayer, T wvno, T omega, int water = 0,
+                            bool clamp_omega = true,
+                            const T *prepared_ka = nullptr,
+                            const T *prepared_kb = nullptr,
+                            const T *prepared_gammk = nullptr,
+                            const T *prepared_irho = nullptr,
+                            const T *prepared_irho2 = nullptr,
+                            T *shape = nullptr) {
+  if (clamp_omega && omega < T(1.0e-4)) omega = T(1.0e-4);
+  const T wvno2 = wvno * wvno;
+  const int last = nlayer - 1;
+
+  const T xka0 = PREPARED ? prepared_ka[last] : omega / a[last];
+  const T xkb0 = PREPARED ? prepared_kb[last] : omega / b[last];
+  T ra = MD_SQRT((wvno + xka0) * MD_FABS(wvno - xka0));
+  T rb = MD_SQRT((wvno + xkb0) * MD_FABS(wvno - xkb0));
+  T gammk = PREPARED ? prepared_gammk[last] : T(2) * (b[last] / omega) * (b[last] / omega);
+  T gam = gammk * wvno2;
+  const T gamm1 = gam - T(1);
+  const T rho_hs = rho[last];
+
+  T e[5];
+  e[0] = rho_hs * rho_hs * (gamm1 * gamm1 - gam * gammk * ra * rb);
+  e[1] = -rho_hs * ra;
+  e[2] = rho_hs * (gamm1 - gammk * ra * rb);
+  e[3] = rho_hs * rb;
+  e[4] = wvno2 - ra * rb;
+
+  for (int m = nlayer - 2; m >= water; --m) {
+    const T xka = PREPARED ? prepared_ka[m] : omega / a[m];
+    const T xkb = PREPARED ? prepared_kb[m] : omega / b[m];
+    gammk = PREPARED ? prepared_gammk[m] : T(2) * (b[m] / omega) * (b[m] / omega);
+    gam = gammk * wvno2;
+    ra = MD_SQRT((wvno + xka) * MD_FABS(wvno - xka));
+    rb = MD_SQRT((wvno + xkb) * MD_FABS(wvno - xkb));
+
+    const T dpth = d[m];
+    const T rhol = rho[m];
+    const T p = ra * dpth;
+    const T q = rb * dpth;
+    const VarOut<T> v = dunkin_var<T, true>(p, q, ra, rb, wvno, xka, xkb, dpth);
+    // Density constants are model-wide and can be supplied even when the
+    // caller does not cache the per-frequency wave numbers.
+    const T irho = prepared_irho ? prepared_irho[m] : T(1) / rhol;
+    const T irho2 = prepared_irho2 ? prepared_irho2[m] : irho * irho;
+
+    T ee[5];
+    dunkin_apply_fast<T>(wvno2, gam, gammk, rhol, v, irho, irho2, e, ee);
+
+    T t1 = T(0);
+#pragma unroll
+    for (int i = 0; i < 5; ++i) t1 = MD_FMAX(t1, MD_FABS(ee[i]));
+    if (t1 < T(1.0e-40)) t1 = T(1);
+    // One reciprocal replaces five divisions. This keeps the same scale as
+    // the released path, so f_accept and the shape feature retain their
+    // meaning; only the last-bit rounding differs.
+    const T inv = T(1) / t1;
+#pragma unroll
+    for (int i = 0; i < 5; ++i) ee[i] *= inv;
+#pragma unroll
+    for (int i = 0; i < 5; ++i) e[i] = ee[i];
+  }
+
+  if (water) {
+    const T ka = omega / a[0];
+    const T rf = MD_SQRT((wvno + ka) * MD_FABS(wvno - ka));
+    const T p = rf * d[0];
+    T cp, w;
+    if (wvno < ka) {
+      T sn;
+      MD_SINCOS_FAST(p, &sn, &cp);
+      w = sn / rf;
+    } else if (wvno == ka) {
+      cp = T(1);
+      w = d[0];
+    } else {
+      const T z = (p < T(16)) ? MD_EXP2(-T(2) * p * T(1.4426950408889634074L)) : T(0);
+      cp = (T(1) + z) * T(.5);
+      w = (T(1) - z) * T(.5) / rf;
+    }
+    const T t0 = cp * e[0], t1 = rho[0] * w * e[1];
+    const T scale = MD_FMAX(T(1), MD_FMAX(MD_FABS(t0), MD_FABS(t1)));
+    if (shape) {
+      const T u = t0 / scale, v = t1 / scale;
+      *shape = (u - v) / MD_SQRT(u * u + v * v + shape_small<T>());
+    }
+    return t0 / scale - t1 / scale;
+  }
+  if (shape) {
+    T other = shape_small<T>();
+    for (int i = 1; i < 5; ++i) other += e[i] * e[i];
+    *shape = e[0] / MD_SQRT(e[0] * e[0] + other);
+  }
   return e[0];
 }
 

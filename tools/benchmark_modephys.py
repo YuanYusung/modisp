@@ -220,6 +220,11 @@ def make_solver(md, args):
     secular = getattr(args, "secular", None)
     if secular is not None and "secular" in inspect.signature(md.Solver).parameters:
         options["secular"] = secular
+    for key in ("refinement","love_strategy"):
+        value=getattr(args,key,None)
+        if value is not None:
+            if key not in inspect.signature(md.Solver).parameters:raise ValueError(f"installation does not support {key}")
+            options[key]=value
     # A pre-0.3.0 installation has only its exact default path; passing a
     # preset to it is intentionally ignored so the same A/B command can pair
     # the old and new packages.
@@ -267,7 +272,7 @@ def run(args):
                   chunk=args.chunk, native_chunk=args.native_chunk, profile=args.profile,
                   accuracy=getattr(args, "accuracy", None),
                   search_strategy=getattr(args, "search_strategy", None),
-                  secular=getattr(args, "secular", None), environment=env)
+                  secular=getattr(args, "secular", None), refinement=getattr(args,"refinement",None),love_strategy=getattr(args,"love_strategy",None),environment=env)
     identity = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     out = args.output.resolve()
     checkpoint = out / "checkpoint.json"
@@ -441,6 +446,8 @@ def main():
         p.add_argument("--accuracy", choices=("high", "balanced", "fast"))
         p.add_argument("--search-strategy", choices=("shape_adaptive", "qe_adaptive", "uniform"))
         p.add_argument("--secular", choices=("dunkin", "fast"))
+        p.add_argument("--refinement",choices=("legacy","brent","chandrupatla"))
+        p.add_argument("--love-strategy",choices=("phase","scan"))
         p.add_argument("--guard-gpu", action="store_true", help="reject observed competing GPU compute")
         if command == "run":
             p.add_argument("--chunk", type=int, default=1024)

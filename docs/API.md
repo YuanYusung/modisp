@@ -66,6 +66,8 @@ reuse their native thread pool or device allocation across compatible calls.
 | `sampling_rtol` | preset | Shape-integral consistency tolerance: high `1e-3`, balanced `1e-2`, fast `5e-2`; explicit values apply only to shape search |
 | `accuracy` | `"balanced"` | Search/accuracy preset: `"high"`, `"balanced"` or `"fast"` (see below) |
 | `secular` | `None` | Actual backend default: CUDA `"fast"`, CPU `"dunkin"`; legacy uniform `"dunkin"`. Explicit values override this policy. |
+| `refinement` | `"brent"` (adaptive) | `"brent"`, `"chandrupatla"`, `"legacy"`; uniform defaults to and requires legacy |
+| `love_strategy` | `"phase"` | SH phase counting with validated original-function brackets and scan fallback; `"scan"` retains the original search |
 | `close_root_rtol` | `0.005` | Relative close-root scale; permits flagged balanced/fast close-cluster ambiguity |
 | `adaptive_period_threshold` | preset | Compatibility metadata only; shape decisions do not depend on this threshold |
 | `workspace_bytes` | `256*1024**2` | Native work-buffer budget, excluding inputs/results and CUDA context |
@@ -207,3 +209,45 @@ streaming ModePhys benchmark tools.
 different layer counts. CUDA uses standard FP64 fused multiply-add; CPU
 contraction is disabled. Root tolerances and acceptance checks are shared, but
 bitwise CPU/GPU identity is not part of the API contract.
+
+
+## Independent cross-period reliability checks (0.3.3)
+
+`check_mode_reliability(result)` or `result.check_modes()` returns a
+`ModeReliability`. Alternatively pass `velocity[B,K,T], periods`, optionally
+`trace_flags[B,T]` and `root_count[B,T]`. It never changes velocities, solve
+status or modal ranks and does not run a new solver.
+
+Options: `close_root_rtol=.005`, `max_relative_step=.1`,
+`prediction_rtol=.05`, `max_log_period_gap=.25`, all finite positive.
+Periods are sorted stably internally; arrays are returned in original order.
+`previous_index[T]` maps each incoming edge to its predecessor's original
+index, with -1 for the first period. Duplicates are compared with their first
+representative; large log-period gaps and the first sample are unassessed.
+
+`flags[B,K,T]` uses `ModeReliabilityFlag`: UNASSESSED=1,
+NUMERICAL_FAILURE=2, ROOT_COUNT_CHANGE=4, CLOSE_ROOT=8,
+RANK_AMBIGUOUS=16, STEP_JUMP=32, PREDICTION_MISMATCH=64,
+DUPLICATE_MISMATCH=128, NONFINITE=256, PERIOD_GAP=512,
+SEARCH_UNCERTAIN=1024. `assessed` means a finite, sufficiently sampled incoming
+edge was available; `passes_checks` additionally requires zero flags. First
+samples, missing modes and large gaps cannot pass by absence of evidence.
+
+Nearest-rank consistency is a heuristic, not eigenfunction matching. Physical
+cutoffs/births and rapid valid dispersion may legitimately be flagged. A smooth
+wrong branch or persistent omission can pass. No field certifies physical mode
+identity, and the separate check is excluded from default solver timings.
+
+CLI: `modisp forward ... --refinement chandrupatla --love-strategy phase
+--check-continuity` stores continuity arrays in the solve NPZ. Or run
+`modisp check-modes solved.npz --output checked.npz` without solving again.
+The check command returns zero on successful execution; inspect its flags and
+summary to interpret the numerical observations.
+
+Successful Love phase traces have `search_level=11`, without approximate-search
+flags even under balanced/fast. A lost/ambiguous phase state falls back to the
+configured scan and retains `TRACE_LOVE_PHASE_FALLBACK=16384`. Inspect
+`love_phase_accepted` and `love_phase_fallbacks` in stats. The default phase root
+tolerance is `min(c_tol_rel,1e-8)` before original-function refinement. General
+Rayleigh root discovery, preset budgets and close-cluster limitations remain
+as documented above. CPU and CUDA package versions and private ABI 7 must match.

@@ -20,10 +20,10 @@ namespace py=pybind11;
 using Array=py::array_t<double,py::array::c_style|py::array::forcecast>;
 constexpr int CAP=2048;
 using Point=std::pair<double,double>;
-using Counters=std::array<unsigned long long,27>;
+using Counters=std::array<unsigned long long,29>;
 using Clock=std::chrono::steady_clock;
 double seconds(Clock::time_point t){return std::chrono::duration<double>(Clock::now()-t).count();}
-const char *counter_names[]={"evaluations","extrema_proposals","brackets","adaptive_converged","dense_converged","unconverged","capacity_hits","near_cutoff","nonfinite","refinement_failed","searches","rejected_f","analytical_empty","range_empty","verification_traces","family_conflicts","early_accepts","verification_skipped","dense_coarse_accepted","dense_fine_escalated","trough_risks","shape_accepted","shape_subdivisions","shape_reused","shape_depth_limit","shape_work_limit","legacy_fallbacks"};
+const char *counter_names[]={"evaluations","extrema_proposals","brackets","adaptive_converged","dense_converged","unconverged","capacity_hits","near_cutoff","nonfinite","refinement_failed","searches","rejected_f","analytical_empty","range_empty","verification_traces","family_conflicts","early_accepts","verification_skipped","dense_coarse_accepted","dense_fine_escalated","trough_risks","shape_accepted","shape_subdivisions","shape_reused","shape_depth_limit","shape_work_limit","legacy_fallbacks","love_phase_accepted","love_phase_fallbacks"};
 extern "C" void md_dunkin_grid(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
 extern "C" void md_dunkin_grid_f32(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
 extern "C" double md_dunkin_point(const double*,const double*,const double*,const double*,int,double,double,int);
@@ -369,10 +369,10 @@ bool search_observation(const Model &model,double period,double lo,double hi,int
 class CpuSolver {
   int threads_;Pool pool;std::vector<Scratch> work;
   std::vector<Model> models;md::AccuracyPolicy policy_;
-  bool shape_;double sampling_rtol_;int secular_;
+  bool shape_;double sampling_rtol_;int secular_,refinement_,love_phase_;
  public:
-  CpuSolver(int threads,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001,int secular=0):threads_(threads),pool(threads),work(threads),
-    policy_(md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol)),shape_(shape),sampling_rtol_(sampling_rtol),secular_(secular){if(threads<1||threads>256)throw py::value_error("threads must be 1..256");if(secular<0||secular>1)throw py::value_error("secular must be 0 (dunkin) or 1 (fast)");}
+  CpuSolver(int threads,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001,int secular=0,int refinement=1,int love_phase=1):threads_(threads),pool(threads),work(threads),
+    policy_(md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol)),shape_(shape),sampling_rtol_(sampling_rtol),secular_(secular),refinement_(refinement),love_phase_(love_phase){if(refinement<0||refinement>2||love_phase<0||love_phase>1)throw py::value_error("invalid refinement or Love strategy");if(threads<1||threads>256)throw py::value_error("threads must be 1..256");if(secular<0||secular>1)throw py::value_error("secular must be 0 (dunkin) or 1 (fast)");}
   py::tuple run(Array h,Array vp,Array vs,Array rho,Array periods,Array bounds,int modes,int wave,bool automatic,double tol,double accept,bool profile=false){
     if(h.ndim()!=2||h.shape(0)<1||h.shape(1)<1)throw py::value_error("model must be [B,L]");
     int B=h.shape(0),L=h.shape(1),nf=periods.size(),K=modes+2;
@@ -395,7 +395,7 @@ class CpuSolver {
         auto &q=models[i];q.ia.resize(L);q.ib.resize(L);q.irho.resize(L);q.irho2.resize(L);const size_t off=i*L;
         q.tx.clear();q.tn.clear();q.tx.reserve(129+2*L);q.tn.reserve(129+2*L);
         for(int j=0;j<L;++j){const double rj=rho.data()[off+j];q.ia[j]=1./(vp.data()[off+j]*vp.data()[off+j]);q.ib[j]=vs.data()[off+j]==0.?0.:1./(vs.data()[off+j]*vs.data()[off+j]);q.irho[j]=1./rj;q.irho2[j]=q.irho[j]*q.irho[j];}
-        q.view={h.data()+off,vp.data()+off,vs.data()+off,rho.data()+off,q.ia.data(),q.ib.data(),L,wave,nullptr,nullptr,nullptr,q.irho.data(),q.irho2.data(),secular_};
+        q.view={h.data()+off,vp.data()+off,vs.data()+off,rho.data()+off,q.ia.data(),q.ib.data(),L,wave,nullptr,nullptr,nullptr,q.irho.data(),q.irho2.data(),secular_,refinement_};
         const int top=q.view.vs[0]==0.?1:0;
         q.seed=wave?q.view.vs[top]:md::rayleigh_reference(q.view.vp[top],q.view.vs[top]);
         q.water_seed=(!wave&&top)?md::scholte_reference(q.view.vp[0],q.view.rho[0],q.view.vp[1],q.view.vs[1],q.view.rho[1]):NAN;
@@ -457,11 +457,18 @@ class CpuSolver {
           previous_ok=ok;w.previous=w.roots;
         }return -1;};
         bool shape_ok=false;unsigned shape_diagnostics=0;
-        if(shape_){
+        if(wave&&love_phase_){
+          w.roots.resize(K);int nr=0,ev=0;
+          shape_ok=md::love_phase_roots(w.medium,omega,lo,hi,K,tol,w.roots.data(),nr,ev);w.stats[0]+=ev;
+          if(shape_ok){w.roots.resize(nr);level=11;++w.stats[27];w.stats[2]+=nr;
+            if(md::has_close_roots(w.roots.data(),nr,w.policy.close_root_rtol))word|=4096;}
+          else{w.roots.clear();word|=16384;++w.stats[28];}
+        }
+        if(shape_&&!shape_ok){
           const auto begin=profile?Clock::now():Clock::time_point{};
           unsigned attempt=0;
           shape_ok=search_shape(model,period,lo,hi,K,tol,sampling_rtol_,w,attempt);
-          if(shape_ok){word=attempt;level=8+static_cast<int>(w.policy.accuracy);}
+          if(shape_ok){word|=attempt;level=8+static_cast<int>(w.policy.accuracy);}
           else{shape_diagnostics=attempt;++w.stats[26];w.roots.clear();}
           if(profile)w.adaptive_s+=seconds(begin);
         }
@@ -501,7 +508,7 @@ class CpuSolver {
       });
       if(profile)solve_s=seconds(stage_start);
     }
-    py::dict stats;for(int j=0;j<27;++j){unsigned long long v=0;for(auto&w:work)v+=w.stats[j];stats[counter_names[j]]=v;}
+    py::dict stats;for(int j=0;j<29;++j){unsigned long long v=0;for(auto&w:work)v+=w.stats[j];stats[counter_names[j]]=v;}
     stats["threads"]=threads_;stats["strategy"]="qe_adaptive";
     stats["accuracy"]=md::accuracy_name(policy_.accuracy);
     stats["period_threshold"]=policy_.period_threshold;
@@ -521,8 +528,8 @@ class CpuSolver {
 };
 
 PYBIND11_MODULE(_cpu,m){
-  m.attr("ABI_VERSION")=6;m.attr("VERSION")="0.3.2";
-  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double,double,bool,double,int>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001,py::arg("secular")=0).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
+  m.attr("ABI_VERSION")=7;m.attr("VERSION")="0.3.3";
+  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double,double,bool,double,int,int,int>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001,py::arg("secular")=0,py::arg("refinement")=1,py::arg("love_phase")=1).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
   m.def("bounds",[](Array h,Array vp,Array vs,Array rho,int wave,py::object low,py::object high){
     int B=h.shape(0),L=h.shape(1);py::array_t<double> result({B,2});
     const bool auto_low=low.is_none(),auto_hi=high.is_none();double given_low=auto_low?0.:low.cast<double>(),given_hi=auto_hi?0.:high.cast<double>();

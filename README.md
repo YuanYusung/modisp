@@ -1,4 +1,4 @@
-# modisp 0.3.2
+# modisp 0.3.3
 
 modisp is an FP64, GPU-accelerated package for batched multimode Rayleigh/P–SV
 and Love phase-velocity calculations in 1-D layered elastic media. A portable
@@ -11,7 +11,7 @@ exploration and synthetic-data workflows. Units are km, km/s, g/cm³ and seconds
 Install the wheel matching your Python and platform, or build the CPU source:
 
 ```sh
-python -m pip install /path/to/modisp-0.3.2-<matching-tags>.whl
+python -m pip install /path/to/modisp-0.3.3-<matching-tags>.whl
 modisp doctor
 ```
 
@@ -33,6 +33,31 @@ contracts the 5-vector without materializing `5x5` entries. CPU defaults to
 frozen-fixture checks. The gains depend on workload and hardware. See
 [0.3.2 methods and measurements](docs/SECULAR_FAST_0_3_2.md); the same-host
 accuracy and performance tables below were rerun with the 0.3.2 backend defaults.
+
+## Changes in 0.3.3
+
+Adaptive CPU/CUDA solvers default to `refinement="brent"`; choose
+`"chandrupatla"` or `"legacy"` explicitly. Love defaults to
+`love_strategy="phase"`: unwrapped SH phase proposes root intervals, the
+original SH function validates/refines them, and ambiguous phase states fall
+back to the configured scan. Phase roots use a tolerance no larger than
+`1e-8`; the P–SV search presets retain their existing tolerances.
+
+Cross-period diagnostics run separately, without changing recovered roots:
+
+```python
+from modisp import check_mode_reliability
+check = check_mode_reliability(result)  # or result.check_modes()
+print(check.summary())
+# check.flags, check.assessed, check.passes_checks follow original input order.
+```
+
+The checker flags count changes, close roots, nearest-rank ambiguity, jumps,
+prediction discrepancies, duplicate inconsistency and large period gaps.
+Passing these heuristic checks does not certify physical branch identity or
+rule out a smooth missing/wrong branch. See [0.3.3 methods and validation](docs/ROOTS_0_3_3.md).
+The same-host tables below remain explicitly historical **0.3.2** measurements;
+they are not relabeled as 0.3.3 performance.
 
 ## Unified dispersion interface
 

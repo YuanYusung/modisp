@@ -59,7 +59,7 @@ def _fixture_paths():
 @pytest.mark.parametrize("accuracy", ["high"])
 def test_presets_match_0_2_1_bitwise(path, accuracy):
     f = np.load(path, allow_pickle=True)
-    options = dict(backend=BACKEND, threads=4, accuracy=accuracy,search_strategy="qe_adaptive",secular="dunkin")
+    options = dict(backend=BACKEND, threads=4, accuracy=accuracy,search_strategy="qe_adaptive",secular="dunkin",refinement="legacy",love_strategy="scan")
     if BACKEND == "cuda":
         options["workspace_bytes"] = 1024 ** 3
     if np.isfinite(f["cmin"]):
@@ -127,7 +127,7 @@ def test_period_threshold_and_stats():
     assert stats["approximate_search_enabled"] is True
     assert stats["early_accepts"] >= 0
     assert stats["verification_skipped"] >= 0
-    assert set(np.unique(out.search_level)).issubset({-1, -4, 3, 5, 6, 7,8,9,10})
+    assert set(np.unique(out.search_level)).issubset({-1, -4, 3, 5, 6, 7,8,9,10,11})
     assert np.array_equal(out.numerical_flags,
                           out.trace_flags & np.uint32(0xFFFFFFFF ^ md.TRACE_RANGE_TRUNCATED))
     report = solver.kernel_report()

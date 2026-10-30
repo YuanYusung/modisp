@@ -76,6 +76,8 @@ def main():
     p.add_argument("--accuracy", choices=("high", "balanced", "fast"))
     p.add_argument("--search-strategy",choices=("shape_adaptive","qe_adaptive","uniform"))
     p.add_argument("--secular",choices=("dunkin","fast"))
+    p.add_argument("--refinement",choices=("legacy","brent","chandrupatla"))
+    p.add_argument("--love-strategy",choices=("phase","scan"))
     p.add_argument("--allow-accuracy-change", action="store_true",
                    help="do not fail when outputs differ; still report the differences")
     args = p.parse_args()
@@ -93,7 +95,7 @@ def main():
     report = {"input_sha256": digest_file(args.input), "models": args.models,
               "period_stride": args.period_stride, "backend": args.backend,
               "threads": args.threads, "workspace_bytes": args.workspace_bytes,
-              "accuracy":args.accuracy,"search_strategy":args.search_strategy,"secular":args.secular,
+              "accuracy":args.accuracy,"search_strategy":args.search_strategy,"secular":args.secular,"refinement":args.refinement,"love_strategy":args.love_strategy,
               "order": [], "variants": {}}
     try:
         for name, python in (("before", args.before_python), ("after", args.after_python)):
@@ -107,7 +109,7 @@ def main():
                 command.append("--profile")
             if args.accuracy:
                 command.extend(["--accuracy", args.accuracy])
-            for option in ("search_strategy","secular"):
+            for option in ("search_strategy","secular","refinement","love_strategy"):
                 if getattr(args,option):command.extend(["--"+option.replace("_","-"),getattr(args,option)])
             if args.native_chunk:
                 command.extend(["--native-chunk", str(args.native_chunk)])

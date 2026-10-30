@@ -33,6 +33,7 @@ for f in files:
         before='baseline/'+old.relative_to(a.baseline).as_posix() if old is not None and old.exists() else '/dev/null'
         diff+=difflib.unified_diff(original.decode().splitlines(True),data.decode().splitlines(True),fromfile=before,tofile='modisp/'+rel)
     if rel in ['cpp/common/dunkin.hpp','cpp/common/physics.hpp']:origin+='; normalized P-SV/SH formulations adapted from CPS/disba; complete notices retained';license_name='BSD-3-Clause AND MIT'
+    if rel=='cpp/common/refinement.hpp':origin+='; Chandrupatla interpolation test adapted from SciPy with full BSD notice retained'
     if rel.startswith('cuda-plugin/cpp/'):origin='exact copy of shared project cpp tree for self-contained plugin sdist'
     if rel in ['cuda-plugin/cpp/common/dunkin.hpp','cuda-plugin/cpp/common/physics.hpp']:license_name='BSD-3-Clause AND MIT'
     if 'NVIDIA_CUDA_12.6_EULA' in rel:origin='unmodified installed CUDA 12.6 toolkit EULA';license_name='NVIDIA-CUDA-12.6'

@@ -18,6 +18,13 @@ and CLI NPZs record the resolved evaluator. Before the first solve, an auto
 solver's kernel report has no resolved evaluator. `modisp doctor` reports both
 the backend policy and the default for the currently available auto backend.
 
+## 0.3.3 root algorithms
+
+`refinement` and `love_strategy` are per Solver; no global selector is used.
+New analytic and diagnostic checks are in `tests/test_reliability.py`. Frozen
+fixtures explicitly select `refinement="legacy", love_strategy="scan"`.
+See [0.3.3 methods and results](ROOTS_0_3_3.md).
+
 ## One regression suite
 
 ```sh

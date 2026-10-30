@@ -1,5 +1,14 @@
 # Changes
 
+## 0.3.3 — 2026-10-31
+
+- Add per-Solver FP64 Brent (adaptive default), Chandrupatla and retained legacy refinement on CPU/CUDA. No global algorithm selector.
+- Add default Love SH phase-count search, original-function bracket validation, tighter phase-root tolerance and explicit scan fallback diagnostics. Retain `love_strategy="scan"` for comparisons.
+- Add separate `check_mode_reliability` / `DispersionBatch.check_modes()` and CLI `check-modes`. Preserve unsorted/repeated periods and expose unassessed edges; never relabel or repair roots automatically. These are heuristic consistency checks, not mode-identity/completeness proofs.
+- Record options in results, stats, kernel reports, doctor and CLI NPZ. Include refinement/strategy choices in streaming checkpoint identities.
+- Retain frozen bitwise regression through explicit legacy/scan selections and add analytic Love spectra, cropped windows, concurrent independent algorithms and diagnostic tests.
+- Bump private CPU/CUDA ABI to 7. See `docs/ROOTS_0_3_3.md` for measured results and limitations.
+
 ## 0.3.2 — 2026-10-29
 
 - Default CUDA adaptive solvers to `secular="fast"`, while CPU and legacy

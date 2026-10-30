@@ -16,6 +16,7 @@ struct Medium {
   // recurrence.
   const double *irho=nullptr,*irho2=nullptr;
   int secular=0;
+  int refinement=1; // 0: legacy, 1: Brent, 2: Chandrupatla (per Solver)
 };
 
 MD_HD bool sh_has_guide(const Medium &m) {
@@ -160,7 +161,7 @@ MD_HD bool contains_witnesses(const double *roots,int n,const double *witness,in
   return true;
 }
 
-MD_HD double refine_root(const Medium &m,double omega,double lo,double hi,double fl,double fh,double tol,int &evals) {
+MD_HD double refine_root_legacy(const Medium &m,double omega,double lo,double hi,double fl,double fh,double tol,int &evals) {
   if(lo==hi)return lo;
   const double target=fmax(16.*2.220446049250313e-16*fmax(fabs(lo),fabs(hi)),fmin((hi-lo)/64.,.125*tol*fmax(fabs(lo),fabs(hi))));
   for(int j=0;j<100 && hi-lo>target;++j){
@@ -174,3 +175,6 @@ MD_HD double refine_root(const Medium &m,double omega,double lo,double hi,double
   return hi-lo<=target ? (lo+hi)*.5:NAN;
 }
 } // namespace md
+
+#include "common/refinement.hpp"
+#include "common/love_phase.hpp"

@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 import numpy as np
-from . import Solver, __version__, _cpu, _load_cuda, BackendUnavailableError
+from . import Solver, __version__, _cpu, _load_cuda, BackendUnavailableError, check_mode_reliability
 
 
 def main(argv=None):
@@ -29,10 +29,26 @@ def main(argv=None):
     forward.add_argument("--c-tol-rel",type=float)
     forward.add_argument("--secular",choices=["dunkin","fast"],default=None,
                          help="secular evaluator (default: CUDA fast, CPU/uniform dunkin)")
+    forward.add_argument("--refinement",choices=["legacy","brent","chandrupatla"],default=None)
+    forward.add_argument("--love-strategy",choices=["phase","scan"],default="phase")
+    forward.add_argument("--check-continuity",action="store_true",help="save separate heuristic mode-reliability diagnostics")
+    modes=sub.add_parser("check-modes",help="check an existing forward NPZ without solving again")
+    modes.add_argument("input");modes.add_argument("--output",required=True)
+    modes.add_argument("--max-relative-step",type=float,default=.1)
+    modes.add_argument("--prediction-rtol",type=float,default=.05)
+    modes.add_argument("--max-log-period-gap",type=float,default=.25)
+    modes.add_argument("--close-root-rtol",type=float)
     args=parser.parse_args(argv)
+    if args.command=="check-modes":
+        with np.load(args.input,allow_pickle=False) as z:
+            close=(args.close_root_rtol if args.close_root_rtol is not None else float(z["close_root_rtol"]) if "close_root_rtol" in z else .005)
+            check=check_mode_reliability(z["phase_velocity"],z["periods"],trace_flags=z["trace_flags"],root_count=z["root_count"],close_root_rtol=close,max_relative_step=args.max_relative_step,prediction_rtol=args.prediction_rtol,max_log_period_gap=args.max_log_period_gap)
+        np.savez_compressed(args.output,continuity_flags=check.flags,continuity_assessed=check.assessed,continuity_previous_index=check.previous_index,continuity_sorted_order=check.sorted_order)
+        print(json.dumps(check.summary(),indent=2));return 0
+
     if args.command=="doctor":
         data=dict(version=__version__,python=sys.executable,cpu_module=_cpu.__file__,
-                  default_accuracy="balanced",default_search_strategy="shape_adaptive",
+                  default_accuracy="balanced",default_refinement="brent",default_love_strategy="phase",refinement_options=["legacy","brent","chandrupatla"],default_search_strategy="shape_adaptive",
                   default_secular_by_backend={"cpu":"dunkin","cuda":"fast","uniform":"dunkin"},secular_options=["dunkin","fast"],
                   private_abi=int(_cpu.ABI_VERSION),sampling_capacity=2048)
         try:
@@ -48,9 +64,13 @@ def main(argv=None):
     with Solver(backend=args.backend,threads=args.threads,device=args.device,cmin=args.cmin,cmax=args.cmax,
                 accuracy=args.accuracy,close_root_rtol=args.close_root_rtol,c_tol_rel=args.c_tol_rel,
                 search_strategy=args.search_strategy,sampling_rtol=args.sampling_rtol,
-                secular=args.secular) as solver:
+                secular=args.secular,refinement=args.refinement,love_strategy=args.love_strategy) as solver:
         out=solver(**model,periods=periods,nmodes=args.nmodes,wave=args.wave)
-        np.savez_compressed(args.output,phase_velocity=out.phase_velocity,periods=out.period,
+        diagnostics={}
+        if args.check_continuity:
+            check=check_mode_reliability(out)
+            diagnostics=dict(continuity_flags=check.flags,continuity_assessed=check.assessed,continuity_previous_index=check.previous_index,continuity_sorted_order=check.sorted_order)
+        np.savez_compressed(args.output,**diagnostics,refinement=np.asarray(out.refinement),love_strategy=np.asarray(out.love_strategy or ""),phase_velocity=out.phase_velocity,periods=out.period,
                             mode_mask=out.mode_mask,status=out.status,trace_flags=out.trace_flags,
                             search_bounds=out.search_bounds,search_level=out.search_level,
                             root_count=out.root_count,backend=out.backend_used,wave=out.wave,

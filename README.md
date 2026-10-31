@@ -56,8 +56,8 @@ The checker flags count changes, close roots, nearest-rank ambiguity, jumps,
 prediction discrepancies, duplicate inconsistency and large period gaps.
 Passing these heuristic checks does not certify physical branch identity or
 rule out a smooth missing/wrong branch. See [0.3.3 methods and validation](docs/ROOTS_0_3_3.md).
-The same-host tables below remain explicitly historical **0.3.2** measurements;
-they are not relabeled as 0.3.3 performance.
+The same-host tables below refresh modisp to **0.3.3**; external
+baselines retain their explicitly labeled 2026-10-29 measurements.
 
 ## Unified dispersion interface
 
@@ -198,94 +198,83 @@ describe the numerical search. `numerical_flags` excludes the user-cropping
 checks, not a mathematical guarantee that every physical root was found. See
 [API and diagnostics](docs/API.md).
 
-## Same-host comparison (0.3.2)
+## Same-host comparison (0.3.3; retained external baselines)
 
-Rerun on **2026-10-29** with modisp **0.3.2** (solver commit `ce1ab41`),
-disba 0.7.0 and QEDispInv `ed1b5dd`, on the same dual-socket Xeon Gold 6430
-host and NVIDIA A800 80GB PCIe (GPU 1). All modisp runs use
-`search_strategy="shape_adaptive"` and the current backend defaults:
-**CPU `secular="dunkin"`; CUDA `secular="fast"`**. The `high`/`balanced`/`fast`
-labels in the tables refer to `accuracy`, independently of the secular evaluator.
-Third-party accuracy and timing rows were also rerun for this comparison.
+**Modisp rows were rerun on 2026-10-31; disba/QED rows are retained from
+2026-10-29, as requested.** All use the same dual-socket Xeon Gold 6430 host
+and the same frozen inputs. CUDA uses A800 80GB PCIe, physical GPU 1.
+Modisp 0.3.3 is commit `1cb70cd`, with `search_strategy="shape_adaptive"`,
+**`refinement="brent"`**, CPU `secular="dunkin"` and CUDA `secular="fast"`.
+The high/balanced/fast labels select accuracy, independently of the evaluator.
 
-Accuracy covers all **171 independent models / 6,083 period traces / 19,161
-finite reference cells** in 11 solid-Rayleigh archives. Input hashes match the
-previous comparison. All archived traces pass their original
-32769/65537-node FP64 stability checks. The independent reference is the judge;
-third-party solvers are compared implementations. Water, Love and Scholte are
-outside this particular comparison. The strict accuracy table uses `high`:
+**CPU load caveat:** the new CPU runs started at one-minute load averages
+**184.2–194.4 on 128 logical CPUs**, with visible timing variation. The retained
+external rows were measured at a different time and load. These are same-host
+records with explicit dates, **not a simultaneous equal-load speed ranking**.
+Do not infer a version speedup from the old and new tables.
 
-| Solver / accuracy preset | Wrong | Missing | Extra | Exceptions / unresolved | Max ordinal common abs error (km/s) |
-|---|---:|---:|---:|---:|---:|
-| modisp CPU / high | 0 | 0 | 0 | 0 | 2.621352e-07 |
-| modisp CUDA / high | 0 | 0 | 0 | 0 | 2.621352e-07 |
-| disba 0.7.0 | 1338 | 1034 | 0 | 12 exceptions | 2.868654e+00 |
-| QEDispInv ed1b5dd | 0 | 1 | 0 | 0 | 1.629918e-12 |
+Accuracy uses **171 independent models / 6,083 period traces / 19,161 finite
+reference cells** in 11 solid-Rayleigh archives. Input hashes match the retained
+comparison, and original 32769/65537-node FP64 stability masks remain intact.
+Water, Love and Scholte are outside this particular external comparison.
 
-`Wrong` means `abs(actual-reference) > max(3e-6, 2e-6*abs(reference))` with
-outputs aligned by recovered mode rank. `Missing`/`Extra` count finite-slot
-changes, not all setwise root omissions. Maximum common error includes only
-finite aligned cells; it does not replace the other counts. disba uses its
-default Dunkin/`dc=0.005` configuration.
+| Solver / accuracy | Test date | Wrong | Missing | Extra | Exceptions / unresolved | Max ordinal common abs error (km/s) |
+|---|---|---:|---:|---:|---:|---:|
+| modisp 0.3.3 CPU / high | 2026-10-31 | 0 | 0 | 0 | 0 | 1.976388e-07 |
+| modisp 0.3.3 CUDA / high | 2026-10-31 | 0 | 0 | 0 | 0 | 1.976388e-07 |
+| disba 0.7.0 (retained) | 2026-10-29 | 1338 | 1034 | 0 | 12 exceptions | 2.868654e+00 |
+| QEDispInv ed1b5dd (retained) | 2026-10-29 | 0 | 1 | 0 | 0 | 1.629918e-12 |
 
-The approximate accuracy presets are **not zero-error under this strict
-threshold**: balanced has 6 wrong cells on each backend; fast has 14,220 CPU /
-14,211 CUDA. Within their documented 2e-5 / 2e-4 relative budgets, isolated-root
-failures are zero. Each has five strictly unmatched close-cluster roots and
-six mode-index shifts; five returned cells lie beyond the independent four-mode
-prefix and remain independently unjudged. The largest rank-aligned deviation
-is about 0.329 km/s after a near-root omission shifts later ranks. These
-uncertainties are retained, not silently removed. See
-[the full 0.3.2 accounting](docs/SAME_HOST_0_3_2.md).
+`Wrong` means `abs(actual-reference) > max(3e-6,2e-6*abs(reference))` km/s,
+with ordinal root alignment. Missing/extra count finite slots, not all setwise
+omissions. Maximum common error excludes nonfinite cells. disba uses default
+Dunkin / `dc=0.005`; its exceptions and missing results are retained.
 
-The fixed-shape performance comparison uses the first 64 `seed20260916` models
-(`L=10`, `T=64`, `nmodes=4`, `cmin=0.2`). All configurations below were rerun;
-values are medians of five steady calls after a separate first call and warmup.
-CPU thread counts are explicit; disba's eight-process pool persists across the
-measured calls. Accuracy and speed must be read together:
+Balanced has **6 CPU / 6 CUDA strict wrong cells**;
+fast has **8,312 CPU / 8,312 CUDA**. Their isolated-root
+failures within the documented 2e-5 / 2e-4 relative budgets remain separately
+accounted for. Close-cluster omissions, rank shifts and independently unjudged
+prefix tails are retained in [the full 0.3.3 accounting](docs/SAME_HOST_0_3_3.md).
+Neither a budget pass nor matching finite masks proves root completeness.
 
-| Solver / accuracy preset | B=1 (s) | B=8 (s) | B=64 (s) | B=64 models/s |
-|---|---:|---:|---:|---:|
-| modisp CPU, 1 thread / high | 0.060497 | 0.491111 | 3.786716 | 16.901 |
-| modisp CPU, 8 threads / high | 0.007695 | 0.062077 | 0.472353 | 135.492 |
-| modisp CUDA / high | 0.006737 | 0.010052 | 0.051538 | 1241.798 |
-| modisp CPU, 1 thread / balanced | 0.025082 | 0.182592 | 1.506705 | 42.477 |
-| modisp CPU, 8 threads / balanced | 0.003789 | 0.023845 | 0.191617 | 333.999 |
-| modisp CUDA / balanced | 0.001890 | 0.002435 | 0.009840 | 6504.294 |
-| modisp CPU, 1 thread / fast | 0.023595 | 0.171697 | 1.435598 | 44.581 |
-| modisp CPU, 8 threads / fast | 0.003520 | 0.022506 | 0.180825 | 353.933 |
-| modisp CUDA / fast | 0.001749 | 0.002083 | 0.008630 | 7415.677 |
-| disba, serial | 0.011032 | 0.096813 | 0.788136 | 81.204 |
-| disba, 8 processes | 0.012103 | 0.014981 | 0.109398 | 585.022 |
-| QEDispInv, serial | 0.012634 | 0.114149 | 0.840837 | 76.115 |
+Performance uses the first 64 `seed20260916` models (`L=10`, `T=64`, four
+modes, `cmin=0.2`). Modisp entries are medians of **five fresh steady calls**
+after a separate first call and warmup. External entries preserve their original
+five-call medians, including the persistent eight-process disba pool.
 
-The CUDA-only larger run contains **1,000 solve tasks and 64 independent
-models**: task `i` uses source model `i % 64`. It has 64,000 model-period tasks
-and **4,096 distinct reference traces**, not 1,000 independent models.
+| Solver / accuracy | Test date | B=1 (s) | B=8 (s) | B=64 (s) | B=64 models/s |
+|---|---|---:|---:|---:|---:|
+| modisp CPU, 1 thread / high | 2026-10-31 | 0.097861 | 0.825126 | 6.430636 | 9.952 |
+| modisp CPU, 8 threads / high | 2026-10-31 | 0.021021 | 0.211781 | 0.847331 | 75.531 |
+| modisp CUDA / high | 2026-10-31 | 0.006762 | 0.009803 | 0.045213 | 1415.533 |
+| modisp CPU, 1 thread / balanced | 2026-10-31 | 0.043905 | 0.301913 | 2.566146 | 24.940 |
+| modisp CPU, 8 threads / balanced | 2026-10-31 | 0.008928 | 0.041338 | 0.580373 | 110.274 |
+| modisp CUDA / balanced | 2026-10-31 | 0.001920 | 0.002384 | 0.008646 | 7402.372 |
+| modisp CPU, 1 thread / fast | 2026-10-31 | 0.041180 | 0.287676 | 2.456856 | 26.050 |
+| modisp CPU, 8 threads / fast | 2026-10-31 | 0.014233 | 0.048632 | 0.302077 | 211.867 |
+| modisp CUDA / fast | 2026-10-31 | 0.001787 | 0.002163 | 0.007844 | 8158.722 |
+| disba, serial (retained) | 2026-10-29 | 0.011032 | 0.096813 | 0.788136 | 81.204 |
+| disba, 8 processes (retained) | 2026-10-29 | 0.012103 | 0.014981 | 0.109398 | 585.022 |
+| QEDispInv, serial (retained) | 2026-10-29 | 0.012634 | 0.114149 | 0.840837 | 76.115 |
 
-| CUDA accuracy preset | Tasks | Independent models | Unique reference traces | First call (s) | Warm median (s) | Tasks/s | First/last strict issues | Outside independent prefix (each output) |
+The CUDA-only larger run has **1,000 tasks repeating 64 independent models**
+via `task i -> source i % 64`: 64,000 model-period tasks but only **4,096
+distinct reference traces**. All rows below are new modisp 0.3.3 measurements.
+
+| CUDA accuracy | Tasks | Independent models | Unique reference traces | First call (s) | Warm median (s) | Tasks/s | First/last strict issues | Outside independent prefix (each output) |
 |---|---:|---:|---:|---:|---:|---:|---|---:|
-| high | 1,000 | 64 | 4,096 | 0.558628 | 0.553372 | 1807.102 | 0 / 0 | 0 |
-| balanced | 1,000 | 64 | 4,096 | 0.150879 | 0.145254 | 6884.478 | 64 / 64 | 48 |
-| fast | 1,000 | 64 | 4,096 | 0.133247 | 0.126782 | 7887.525 | 156672 / 156672 | 78 |
+| high | 1,000 | 64 | 4,096 | 0.476671 | 0.469490 | 2129.969 | 0 / 0 | 0 |
+| balanced | 1,000 | 64 | 4,096 | 0.127757 | 0.120532 | 8296.564 | 64 / 64 | 48 |
+| fast | 1,000 | 64 | 4,096 | 0.116973 | 0.108554 | 9211.995 | 94839 / 94839 | 78 |
 
-The first and last high outputs have zero wrong/missing/extra/unresolved
-results under the strict threshold. Balanced/fast have zero isolated-root
-failures within their preset budgets; their strict issue counts retain both
-close-root rank shifts and lower-refinement-precision differences. Returned
-values beyond the independent prefix remain unjudged even when retained guards
-classify them. Third parties were not run at B=1,000; their same-size comparison
-remains B=1/8/64.
-
-The initial CUDA timing attempt was rejected after the monitor detected other
-GPU compute. The reported CUDA retries recorded no competing compute on the
-selected device; other GPU memory allocations remained present. This is a
-shared host, so monitoring is not a guarantee of isolated-host timing.
-Cold/JIT/setup costs, all five samples and first/last accuracy checks are in
-[the 0.3.2 report](docs/SAME_HOST_0_3_2.md) and its
-[statistical receipt](docs/benchmarks/samehost-0.3.2-20261029.json).
-These measurements describe these inputs/settings and do not establish root
-completeness or superiority on arbitrary models.
+High first/last outputs have zero wrong/missing/extra/unresolved results.
+Approximate presets retain strict issues and unjudged prefix tails; read these
+with their budgeted matching metrics. Third parties were not run at B=1,000.
+The monitored CUDA runs recorded no competing compute on the selected device;
+other resident allocations and heavy host load remained. This does not certify
+an isolated machine. All samples, cold/setup costs, provenance and input hashes
+are in [the report](docs/SAME_HOST_0_3_3.md) and
+[the receipt](docs/benchmarks/samehost-0.3.3-20261031.json).
 
 ## Command line
 

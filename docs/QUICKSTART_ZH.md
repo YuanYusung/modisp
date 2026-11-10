@@ -6,7 +6,7 @@ P–SV/Scholte 型根及 Love 多模态相速度。
 ## 安装
 
 ```sh
-python -m pip install /path/to/modisp-0.3.2-<匹配标签>.whl
+python -m pip install /path/to/modisp-0.4.0-<匹配标签>.whl
 modisp doctor
 ```
 
@@ -14,7 +14,7 @@ CPU 使用不需要 CUDA。有 NVIDIA GPU 时，再安装版本完全一致的
 `modisp_cuda12` wheel。离线安装：
 
 ```sh
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.3.2
+python -m pip install --no-index --find-links /path/to/wheelhouse 'modisp[cuda12]==0.4.0'
 ```
 
 从源码安装使用 `python -m pip install <CPU源码包.tar.gz>`，需要 C++17
@@ -77,8 +77,9 @@ with Solver(backend="auto", threads=8, chunk_size=100) as solver:
 
 ## 精度档位
 
-默认 `balanced` 和 `fast` 使用局部自适应采样，分别允许在不一致区间宽度达到近根尺度的 0.5 倍和 1 倍时停止细分；
-二者仍使用 FP64，但允许不可分辨近根簇发生遗漏或近似，换取更高速度。
+默认算术精度为 FP64。`balanced` 和 `fast` 使用局部自适应采样，
+分别允许在不一致区间宽度达到近根尺度的 0.5 倍和 1 倍时停止细分，
+因此近根簇可能发生遗漏或近似。
 
 ```python
 with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solver:
@@ -89,7 +90,7 @@ with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solve
 ```
 
 `close_root_rtol=0.005` 表示 0.5%，可配置。`high` 逐根搜索，不按此阈值合并。
-0.3.2 默认 `search_strategy="shape_adaptive"`，用局部五点积分一致性决定细分。
+默认 `search_strategy="shape_adaptive"`，用局部五点积分一致性决定细分。
 `secular=None` 按实际后端选择：CUDA 默认 `fast`，CPU 默认 `dunkin`；
 `backend="auto"` 回退 CPU 时也采用 `dunkin`。legacy `uniform` 默认仍用 `dunkin`。
 显式 `secular="fast"` 或 `"dunkin"` 可覆盖自适应求解器的默认选择。固定节点 CPU 测量约 1.03–1.19× 函数加速、1.07–1.10×
@@ -100,7 +101,14 @@ with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solve
 近似档的 `mode` 是恢复根的排序编号；遗漏近根簇后可能错位。`close_root_mask=False`
 不能证明没有漏掉近根。默认根精修容差为 high `1e-6`、balanced `1e-5`、fast `1e-4`；
 显式 `c_tol_rel` 仍优先。`search_level=8/9/10` 分别表示 high/balanced/fast 形状搜索；6/7 为旧路径的观测网格。
-详见[当前精度与速度报告](SECULAR_FAST_0_3_2.md) 与 [0.3.1 验证](SHAPE_ADAPTIVE_0_3_1.md)。
+详见[性能与精度报告](PERFORMANCE.md)。
+
+### CUDA 单精度
+
+用 `Solver(backend="cuda", precision="float32")` 启用单精度自适应求解。
+相速度输出为 `float32`。在 `high` 中，符号有歧义的少量轨迹可用
+FP64 复核，`TRACE_FP64_REPAIR` 和 `stats()["fp64_repair_traces"]` 记录
+复核情况。精度选项与 `high`、`balanced`、`fast` 预设分别设置。
 
 ## 诊断和编号
 
@@ -129,6 +137,7 @@ with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solve
 ```sh
 python examples/make_input.py input.npz
 modisp forward input.npz --output result.npz --backend cpu --threads 4 --nmodes 3
+modisp forward input.npz --output fp32.npz --backend cuda --precision float32
 modisp doctor
 ```
 

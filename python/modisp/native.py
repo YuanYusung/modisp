@@ -1,7 +1,7 @@
 """Installed FP64 evaluator and solid-only precision probes.
 
 Diagnostic grids share the production physics and are not independent physical
-references. Production CPU/CUDA solvers always use normalized FP64 evaluation.
+references. The production CPU solver uses normalized FP64 evaluation.
 """
 import numpy as np
 from . import _cpu

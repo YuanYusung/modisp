@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
+  set(MD_DEFAULT_CUDA_ARCHITECTURES ON)
+endif()
 project(modisp_cuda12 LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
@@ -9,6 +12,16 @@ find_package(pybind11 CONFIG REQUIRED)
 find_package(CUDAToolkit 12 REQUIRED)
 if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13)
   message(FATAL_ERROR "This distribution requires a CUDA 12 toolkit")
+endif()
+if(MD_DEFAULT_CUDA_ARCHITECTURES)
+  set(MD_CUDA_ARCHITECTURES 70 75 80 86 89 90)
+  execute_process(COMMAND "${CMAKE_CUDA_COMPILER}" --list-gpu-code
+    OUTPUT_VARIABLE MD_CUDA_CODES RESULT_VARIABLE MD_CUDA_LIST_STATUS
+    ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(MD_CUDA_LIST_STATUS STREQUAL "0" AND MD_CUDA_CODES MATCHES "(^|\n)sm_120(\r?\n|$)")
+    list(APPEND MD_CUDA_ARCHITECTURES 120)
+  endif()
+  set(CMAKE_CUDA_ARCHITECTURES "${MD_CUDA_ARCHITECTURES}" CACHE STRING "CUDA architectures" FORCE)
 endif()
 # The release preparation script copies the exact shared source here. In the
 # development checkout it is taken directly from the common project tree.

@@ -57,6 +57,7 @@ struct Model {
   md::Medium view;
   std::vector<double> ia,ib,irho,irho2,tx,tn,sx;
   double seed,water_seed;
+  bool sh_guide;
 };
 struct BracketRoot { double lo,hi,root; };
 struct Scratch {
@@ -380,6 +381,9 @@ class CpuSolver {
     if(periods.ndim()!=1||nf<1||bounds.ndim()!=2||bounds.shape(0)!=B||bounds.shape(1)!=2||modes<1||L>256)throw py::value_error("invalid CPU geometry");
     py::array_t<double> output({B,modes,nf});py::array_t<unsigned> flags({B,nf});
     py::array_t<int> levels({B,nf}),counts({B,nf});
+    double *velocity_data=output.mutable_data();
+    unsigned *flags_data=flags.mutable_data();
+    int *levels_data=levels.mutable_data(), *counts_data=counts.mutable_data();
     if(models.size()<static_cast<size_t>(B))models.resize(B);
     double prepare_s=0.,solve_s=0.;
     {
@@ -393,13 +397,15 @@ class CpuSolver {
       auto stage_start=profile?Clock::now():Clock::time_point{};
       pool.run(B,[&](size_t i,int){
         auto &q=models[i];q.ia.resize(L);q.ib.resize(L);q.irho.resize(L);q.irho2.resize(L);const size_t off=i*L;
+        q.view={h.data()+off,vp.data()+off,vs.data()+off,rho.data()+off,q.ia.data(),q.ib.data(),L,wave,nullptr,nullptr,nullptr,q.irho.data(),q.irho2.data(),secular_,refinement_};
+        q.sh_guide=!wave||md::sh_has_guide(q.view);
+        const double lo=bounds.data()[2*i],hi=bounds.data()[2*i+1];
+        if(hi<=lo||(hi>lo&&!q.sh_guide))return;
         q.tx.clear();q.tn.clear();q.tx.reserve(129+2*L);q.tn.reserve(129+2*L);
         for(int j=0;j<L;++j){const double rj=rho.data()[off+j];q.ia[j]=1./(vp.data()[off+j]*vp.data()[off+j]);q.ib[j]=vs.data()[off+j]==0.?0.:1./(vs.data()[off+j]*vs.data()[off+j]);q.irho[j]=1./rj;q.irho2[j]=q.irho[j]*q.irho[j];}
-        q.view={h.data()+off,vp.data()+off,vs.data()+off,rho.data()+off,q.ia.data(),q.ib.data(),L,wave,nullptr,nullptr,nullptr,q.irho.data(),q.irho2.data(),secular_,refinement_};
         const int top=q.view.vs[0]==0.?1:0;
         q.seed=wave?q.view.vs[top]:md::rayleigh_reference(q.view.vp[top],q.view.vs[top]);
         q.water_seed=(!wave&&top)?md::scholte_reference(q.view.vp[0],q.view.rho[0],q.view.vp[1],q.view.vs[1],q.view.rho[1]):NAN;
-        double lo=bounds.data()[2*i],hi=bounds.data()[2*i+1];
         for(int j=0;j<129;++j)q.tx.push_back(lo+(hi-lo)*j/128.);
         for(int j=0;j<L;++j)for(double c:{q.view.vp[j],q.view.vs[j]})if(c>lo&&c<hi)q.tx.push_back(c);
         std::sort(q.tx.begin(),q.tx.end());q.tx.erase(std::unique(q.tx.begin(),q.tx.end()),q.tx.end());
@@ -410,7 +416,10 @@ class CpuSolver {
           const double automatic=md::automatic_lower(q.view);
           const double anchor=automatic>0.&&std::isfinite(automatic)?std::fmin(lo,automatic):lo;
           const double anchor_hi=std::nextafter(q.view.vs[L-1],0.);
-          if(hi>lo)for(int j=1;j<128;++j)seed(std::exp(std::log(anchor)+(std::log(anchor_hi)-std::log(anchor))*j/128.));
+          if(hi>lo){
+            const double log_anchor=std::log(anchor), log_span=std::log(anchor_hi)-log_anchor;
+            for(int j=1;j<128;++j)seed(std::exp(log_anchor+log_span*j/128.));
+          }
           for(int j=q.view.wave&&top?1:0;j<L;++j)for(double v:{q.view.vp[j],q.view.vs[j]})for(int side=-1;side<=1;++side)seed(v*(1.+side*1e-7));
           seed(q.seed);seed(.9*q.seed);seed(q.water_seed);seed(.9*q.water_seed);
           if(policy_.accuracy==md::Accuracy::High)for(double v:{q.seed,q.water_seed})for(double gap:{1e-7,1e-6,1e-5,1e-4,1e-3}){seed(v*(1.-gap));seed(v*(1.+gap));}
@@ -420,15 +429,23 @@ class CpuSolver {
       if(profile){prepare_s=seconds(stage_start);stage_start=Clock::now();}
       pool.run(static_cast<size_t>(B)*nf,[&](size_t t,int id){
         auto &w=work[id];const int i=t/nf,f=t%nf;auto &model=models[i];
+        const double lo=bounds.data()[2*i],hi=bounds.data()[2*i+1],period=periods.data()[f];
+        const size_t output_offset=static_cast<size_t>(i)*modes*nf+f;
+        const bool range_empty=hi<=lo, analytical_empty=hi>lo&&!model.sh_guide;
+        if(range_empty||analytical_empty){
+          for(int m=0;m<modes;++m)velocity_data[output_offset+static_cast<size_t>(m)*nf]=NAN;
+          flags_data[t]=0;
+          levels_data[t]=range_empty?-4:-3;
+          counts_data[t]=0;
+          ++w.stats[range_empty?13:12];
+          return;
+        }
         unsigned word=0;bool ready=false,previous_ok=false;int level=-1;
         w.cache.clear();w.previous.clear();w.refined.clear();w.dense_values.clear();w.dense_cells=0;
-        double lo=bounds.data()[2*i],hi=bounds.data()[2*i+1],period=periods.data()[f];
         const double omega=md::two_pi<double>()/period;
         for(int j=0;j<L;++j){w.ka[j]=omega/model.view.vp[j];w.kb[j]=model.view.vs[j]==0.?0.:omega/model.view.vs[j];const double z=model.view.vs[j]/omega;w.gammk[j]=2.*z*z;}
         w.medium=model.view;w.medium.ka=w.ka.data();w.medium.kb=w.kb.data();w.medium.gammk=w.gammk.data();
         w.medium.irho=model.irho.data();w.medium.irho2=model.irho2.data();w.medium.secular=secular_;
-        if(hi>lo&&model.view.wave&&!md::sh_has_guide(model.view)){for(int m=0;m<modes;++m)output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=NAN;flags.mutable_data()[t]=0;levels.mutable_data()[t]=-3;counts.mutable_data()[t]=0;++w.stats[12];return;}
-        if(hi<=lo){for(int m=0;m<modes;++m)output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=NAN;flags.mutable_data()[t]=0;levels.mutable_data()[t]=-4;counts.mutable_data()[t]=0;++w.stats[13];return;}
         bool shifted_companion=false;
         auto search=[&](bool guarded,int begin=0){
         previous_ok=false;w.previous.clear();w.escalated=false;
@@ -501,10 +518,10 @@ class CpuSolver {
           double root=ready&&m<static_cast<int>(w.roots.size())?w.roots[m]:NAN;
           if(std::isfinite(root)&&root>=.99*model.view.vs[L-1])cutoff=true;
           if(std::isfinite(root)&&accept<1.){double value=evaluate(w.medium,omega,root,w);if(!std::isfinite(value)||std::fabs(value)>accept){root=NAN;word|=128;++w.stats[11];}}
-          output.mutable_data()[(static_cast<size_t>(i)*modes+m)*nf+f]=root;
+          velocity_data[output_offset+static_cast<size_t>(m)*nf]=root;
         }
         if(shape_&&!shape_ok)word|=8192|shape_diagnostics;
-        if(cutoff)word|=16;if(word&16)++w.stats[7];flags.mutable_data()[t]=word;levels.mutable_data()[t]=level;counts.mutable_data()[t]=ready?w.roots.size():-1;
+        if(cutoff)word|=16;if(word&16)++w.stats[7];flags_data[t]=word;levels_data[t]=level;counts_data[t]=ready?w.roots.size():-1;
       });
       if(profile)solve_s=seconds(stage_start);
     }
@@ -528,7 +545,7 @@ class CpuSolver {
 };
 
 PYBIND11_MODULE(_cpu,m){
-  m.attr("ABI_VERSION")=7;m.attr("VERSION")="0.3.3";
+  m.attr("ABI_VERSION")=8;m.attr("VERSION")="0.4.0";
   py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double,double,bool,double,int,int,int>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001,py::arg("secular")=0,py::arg("refinement")=1,py::arg("love_phase")=1).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
   m.def("bounds",[](Array h,Array vp,Array vs,Array rho,int wave,py::object low,py::object high){
     int B=h.shape(0),L=h.shape(1);py::array_t<double> result({B,2});

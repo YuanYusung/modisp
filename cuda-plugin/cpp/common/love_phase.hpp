@@ -1,47 +1,67 @@
 // BSD-3-Clause. Unwrapped SH phase with the decaying solid half-space boundary.
 #pragma once
+#include <type_traits>
 namespace md {
-MD_HD double phase_unwrap(double raw,double previous){
+template<class T>
+MD_HD T phase_unwrap(T raw,T previous){
   return previous+atan2(sin(raw-previous),cos(raw-previous));
 }
-MD_HD double love_phase(const Medium &m,double omega,double c){
-  const int last=m.L-1,top=m.vs[0]==0.?1:0;
-  const double k=omega/c,khalf=omega/m.vs[last];
+template<class T>
+MD_HD T love_phase_values(const T *h,const T *vs,const T *rho,int layers,T omega,T c){
+  const int last=layers-1,top=vs[0]==T(0)?1:0;
+  const T k=omega/c,khalf=omega/vs[last];
   if(!(k>khalf))return NAN;
-  double scale=m.rho[last]*m.vs[last]*m.vs[last]*sqrt((k+khalf)*(k-khalf));
-  double theta=two_pi<double>()*.125;
+  T scale=rho[last]*vs[last]*vs[last]*sqrt((k+khalf)*(k-khalf));
+  T theta=two_pi<T>()*T(.125);
   for(int j=last-1;j>=top;--j){
-    if(m.h[j]==0.)continue;
-    const double mu=m.rho[j]*m.vs[j]*m.vs[j],kb=omega/m.vs[j];
-    const double r=sqrt(fabs((k+kb)*(k-kb))),next=mu*(r>0.?r:1./m.h[j]);
-    if(!(scale>0.)||!(next>0.)||!refinement_finite(scale/next))return NAN;
+    if(h[j]==T(0))continue;
+    const T mu=rho[j]*vs[j]*vs[j],kb=omega/vs[j];
+    const T r=sqrt(fabs((k+kb)*(k-kb))),next=mu*(r>T(0)?r:T(1)/h[j]);
+    if(!(scale>T(0))||!(next>T(0))||!refinement_finite(scale/next))return NAN;
     theta=phase_unwrap(atan2((scale/next)*sin(theta),cos(theta)),theta);scale=next;
-    if(k<kb)theta-=r*m.h[j];
+    if(k<kb)theta-=r*h[j];
     else{
-      const double x=sin(theta),y=cos(theta);double u,t;
-      if(r==0.){t=x;u=y+x*m.h[j]*scale/mu;}
-      else{const double e=exp(-2.*r*m.h[j]),cq=.5*(1.+e),sn=.5*(1.-e);t=x*cq+y*sn;u=y*cq+x*sn;}
+      const T x=sin(theta),y=cos(theta);T u,t;
+      if(r==T(0)){t=x;u=y+x*h[j]*scale/mu;}
+      else{const T e=exp(-T(2)*r*h[j]),cq=T(.5)*(T(1)+e),sn=T(.5)*(T(1)-e);t=x*cq+y*sn;u=y*cq+x*sn;}
       // An opaque layer can cancel both scaled components. Do not infer a
       // winding number from a lost state; retain the scan fallback instead.
-      if(fmax(fabs(t),fabs(u))<1e-14)return NAN;
+      if(fmax(fabs(t),fabs(u))<(sizeof(T)==sizeof(float)?T(1e-6):T(1e-14)))return NAN;
       theta=phase_unwrap(atan2(t,u),theta);
     }
-    if(!refinement_finite(theta)||fabs(theta)>1048576.)return NAN;
+    if(!refinement_finite(theta)||fabs(theta)>T(1048576))return NAN;
   }
   return theta;
 }
 
-MD_HD double love_phase_root(const Medium &m,double omega,double low,double high,
+MD_HD double love_phase(const Medium &m,double omega,double c){
+  return love_phase_values(m.h,m.vs,m.rho,m.L,omega,c);
+}
+
+#ifdef __CUDACC__
+MD_HD double love_phase(const FloatMedium &m,double omega,double c){
+  return love_phase_values(m.fh,m.fvs,m.frho,m.L,static_cast<float>(omega),static_cast<float>(c));
+}
+#endif
+
+template<class M>
+MD_HD double love_phase_root(const M &m,double omega,double low,double high,
                              double pl,double ph,double level,double phase_tol,int &evaluations){
-    double a=low,b=high,pa=pl,pb=ph;
-    if(!(pa>=level&&pb<level))return NAN;
-    const double stop=refinement_target(a,b,phase_tol);
+    double a=low,b=high;
+    if(!(pl>=level&&ph<level))return NAN;
+    const double stop=refinement_target(m,a,b,phase_tol);
     for(int j=0;j<160&&b-a>stop;++j){
       const double mid=a+.5*(b-a),p=love_phase(m,omega,mid);++evaluations;
       if(!refinement_finite(p))return NAN;
-      if(p>level){a=mid;pa=p;}else{b=mid;pb=p;}
+      if(p>level)a=mid;else b=mid;
     }
     if(b-a>stop)return NAN;
+    if constexpr (!std::is_same_v<M,Medium>) {
+      // The independently evaluated phase and secular sign can cross at
+      // different FP32 nodes. Give the sign check room for roundoff.
+      const double padding=32.*FLT_EPSILON*fmax(fabs(a),fabs(b));
+      a=fmax(low,a-padding);b=fmin(high,b+padding);
+    }
     double fa=evaluate(m,omega,a),fb=evaluate(m,omega,b);evaluations+=2;
     if(!refinement_finite(fa)||!refinement_finite(fb)||
        (fa!=0.&&fb!=0.&&((fa<0.)==(fb<0.))))return NAN;

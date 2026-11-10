@@ -7,7 +7,7 @@ The Python import package and command-line program are both named `modisp`.
 ```sh
 python -m venv .venv
 # Activate the environment using your shell's normal command.
-python -m pip install /path/to/modisp-0.3.2-<matching-tags>.whl
+python -m pip install /path/to/modisp-0.4.0-<matching-tags>.whl
 modisp doctor
 python /path/to/examples/quickstart.py
 ```
@@ -20,22 +20,20 @@ and disba/Numba) are optional.
 
 Install the exact matching plugin after the CPU package:
 
-Release 0.3.2 uses private ABI 6. Install the exact matching CPU/plugin
-pair; replace both packages when upgrading from 0.3.1 / ABI 5 or earlier.
-Check [GitHub Releases](https://github.com/YuanYusung/modisp/releases) for
-published assets; a source push alone does not publish 0.3.2 wheels.
+Version 0.4.0 uses private ABI 8. Replace both packages together when
+upgrading. Published assets are listed under
+[GitHub Releases](https://github.com/YuanYusung/modisp/releases).
 
 ```sh
-python -m pip install /path/to/modisp_cuda12-0.3.2-<matching-tags>.whl
+python -m pip install /path/to/modisp_cuda12-0.4.0-<matching-tags>.whl
 modisp doctor
 ```
 
-The attached CUDA wheel targets Linux x86_64, CPython 3.10 and sm_80, and
-requires a compatible NVIDIA driver. The macOS CPU wheel targets macOS 27
-arm64 / CPython 3.12. Use a source build for other supported configurations.
-Its static CUDA runtime is linked into the extension; a toolkit is needed only
-for source builds. Use `backend="cuda"` to require CUDA or `backend="auto"` for
-automatic selection. `device=0` is the first device visible to the process.
+Use a wheel that matches the OS, Python ABI and GPU target, or build from
+source. The CUDA plugin links its runtime statically and requires a compatible
+NVIDIA driver. A toolkit is needed for source builds. Use `backend="cuda"` to
+require CUDA or `backend="auto"` for automatic selection. `device=0` is the
+first device visible to the process.
 
 ## Source builds
 
@@ -43,7 +41,7 @@ CPU builds require CMake >=3.22, a C++17 compiler and Python development
 headers:
 
 ```sh
-python -m pip install /path/to/modisp-0.3.2.tar.gz
+python -m pip install /path/to/modisp-0.4.0.tar.gz
 ```
 
 To build a wheel explicitly:
@@ -57,22 +55,35 @@ The plugin source distribution is self-contained and requires a CUDA 12
 toolkit plus a supported host compiler:
 
 ```sh
-CUDACXX=/usr/local/cuda/bin/nvcc python -m pip install /path/to/modisp_cuda12-0.3.2.tar.gz
+CUDACXX=/usr/local/cuda/bin/nvcc python -m pip install /path/to/modisp_cuda12-0.4.0.tar.gz
 ```
 
 For a combined source tree, first run `python tools/prepare_release.py` to copy
 the shared C++ sources into the plugin, then build the base and plugin
-separately. `-Ccmake.define.CMAKE_CUDA_ARCHITECTURES=80` can target one device
-during development. Installed extensions reside inside their Python packages;
-no source-tree build directory or `PYTHONPATH` is needed at runtime.
+separately. By default the plugin builds for `sm_70`, `sm_75`, `sm_80`,
+`sm_86`, `sm_89` and `sm_90`, and includes `sm_120` when nvcc lists it.
+Use `-Ccmake.define.CMAKE_CUDA_ARCHITECTURES=80` for an A800-only build.
+Installed extensions reside inside their Python packages.
+
+Build both packages from this checkout to use the FP32 solver. For example,
+an RTX 5050 needs a CUDA 12 toolkit with `sm_120` support:
+
+```sh
+python -m pip install .
+CUDACXX=/path/to/cuda-12.9/bin/nvcc python -m pip install ./cuda-plugin \
+  -Ccmake.define.CMAKE_CUDA_ARCHITECTURES=120
+modisp doctor
+```
+
+`doctor` reports `cuda_float32_available` for the loaded plugin and device.
 
 ## Offline deployment
 
 Provide a wheelhouse with runtime dependencies and matching modisp wheels:
 
 ```sh
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.3.2
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp-cuda12==0.3.2
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.4.0
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp-cuda12==0.4.0
 ```
 
 For an offline source build, also collect scikit-build-core, pybind11 and their
@@ -85,11 +96,12 @@ build dependencies. After installing them, use
 python examples/make_input.py input.npz
 modisp forward input.npz --output output.npz --backend cpu --threads 4 --nmodes 3
 modisp forward input.npz --output love.npz --wave love --backend auto
+modisp forward input.npz --output fp32.npz --backend cuda --precision float32
 ```
 
 Input keys are `thickness`, `vp`, `vs`, `rho` (1-D or `[B,L]`) and `periods`.
 Output includes phase velocity, mask, status, flags, search bounds/level/count,
-periods, backend and wave. `--cmin`, `--cmax` and `--device` are optional.
+periods, backend, wave and precision. `--cmin`, `--cmax` and `--device` are optional.
 Exit 0 indicates no unresolved search; exit 2 preserves unresolved diagnostics
 in the output. `doctor` reports versions, extension paths, backend selection,
 device name and memory.

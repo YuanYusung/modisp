@@ -24,6 +24,20 @@ def test_batch_halfspace_rayleigh_and_period_order(accuracy,rtol):
     np.testing.assert_allclose(out.phase_velocity[0,0],vs*np.sqrt(root),atol=1e-6,rtol=rtol)
 
 
+@pytest.mark.skipif(BACKEND != "cuda", reason="float32 requires adaptive CUDA")
+def test_float32_rayleigh_root_inside_factored_low_velocity_range():
+    # The thick soft layer is effectively a half-space at these periods.
+    # Its fundamental lies below Vs_halfspace / 16, inside the factored range.
+    vp, vs = .34, .18
+    ratio = (vs / vp) ** 2
+    root = brentq(lambda x: x**3 - 8*x*x + (24-16*ratio)*x - 16*(1-ratio), 0., 1.)
+    with md.Solver(backend="cuda", precision="float32", accuracy="high",
+                   cmin=.005, cmax=.22) as solver:
+        out = solver([5., 0.], [vp, 12.], [vs, 6.], [1.8, 3.3], [.5, 1.], nmodes=1)
+    assert not np.any(out.trace_flags & md.TRACE_SEARCH_UNCONVERGED)
+    np.testing.assert_allclose(out.phase_velocity[0, 0], vs*np.sqrt(root), rtol=2e-5)
+
+
 def test_halfspace_has_no_love_guided_modes():
     with md.Solver(backend=BACKEND) as solver:
         out=solver([0.],[6.],[3.5],[2.7],[.1,1.,10.],nmodes=1,wave="love")

@@ -110,11 +110,13 @@ external contributions to this project including patches, pull requests, etc.
 
 ## Optional CUDA runtime
 
-The CUDA plugin statically links NVIDIA CUDA Runtime 12.6. Its NVIDIA license
-and third-party notices are included in the plugin distribution as
-`licenses/NVIDIA_CUDA_12.6_EULA.txt`. These terms apply to that runtime; the CPU
-base package does not include or link it. The project source remains under the
-BSD-3-Clause license with the CPS/disba/pybind11 notices above.
+The CUDA plugin statically links the NVIDIA CUDA 12 runtime from the toolkit
+used to build it. The plugin distribution includes the toolkit EULAs for
+the tested CUDA 12.6 and 12.9 builds in
+`licenses/NVIDIA_CUDA_12.6_EULA.txt` and `licenses/NVIDIA_CUDA_12.9_EULA.txt`.
+The CPU base package is built independently of the CUDA runtime. Project
+source is distributed under BSD-3-Clause with the CPS/disba/pybind11 notices
+above.
 
 
 ## Chandrupatla interpolation reference (SciPy)

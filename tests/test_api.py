@@ -92,6 +92,9 @@ def test_unavailable_and_version_checks(monkeypatch):
         assert out.backend_used=='cpu' and 'unavailable' in out.backend_reason
     with md.Solver(backend='cuda') as s:
         with pytest.raises(_loader.BackendUnavailableError):s([0.],[6.],[3.5],[2.7],[1.])
+    with md.Solver(backend="auto", precision="float32") as s:
+        with pytest.raises(_loader.BackendUnavailableError, match="test unavailable"):
+            s([0.], [6.], [3.5], [2.7], [1.])
     class Wrong:
         VERSION='99';ABI_VERSION=1
     class Package:
@@ -99,6 +102,78 @@ def test_unavailable_and_version_checks(monkeypatch):
         def load():return Wrong()
     monkeypatch.setitem(sys.modules,'modisp_cuda',Package())
     with pytest.raises(RuntimeError,match='versions differ'):_loader.load()
+
+
+def test_float32_backend_requirements(monkeypatch):
+    with pytest.raises(ValueError, match="precision must be"):
+        md.Solver(precision="float16")
+    with pytest.raises(ValueError, match="adaptive CUDA"):
+        md.Solver(backend="cpu", precision="float32")
+    with pytest.raises(ValueError, match="adaptive CUDA"):
+        md.Solver(backend="cuda", precision="float32", search_strategy="uniform")
+
+    monkeypatch.setattr(md, "_load_cuda", object)
+    with md.Solver(backend="auto", precision="float32") as solver:
+        with pytest.raises(md.BackendUnavailableError, match="FP32-capable CUDA plugin"):
+            solver([0.], [6.], [3.5], [2.7], [1.])
+
+
+@pytest.mark.parametrize("field,value,match", [
+    ("thickness", [1e-50], "thickness"),
+    ("rho", [1e50], "rho"),
+    ("periods", [1e50], "periods"),
+    ("periods", [1e-40], "angular frequencies"),
+])
+def test_float32_input_range(field, value, match):
+    model = dict(thickness=[0.], vp=[6.], vs=[3.5], rho=[2.7], periods=[1.])
+    model[field] = value
+    with md.Solver(precision="float32") as solver:
+        with pytest.raises(ValueError, match=match):
+            solver(**model)
+
+
+@pytest.mark.skipif(BACKEND != "cuda", reason="float32 requires adaptive CUDA")
+@pytest.mark.parametrize("wave,strategy,secular,love_strategy,water", [
+    ("rayleigh", "shape_adaptive", "fast", "phase", False),
+    ("rayleigh", "shape_adaptive", "fast", "phase", True),
+    ("rayleigh", "qe_adaptive", "dunkin", "phase", False),
+    ("love", "shape_adaptive", None, "phase", False),
+    ("love", "qe_adaptive", None, "scan", False),
+])
+def test_float32_cuda_precision(wave, strategy, secular, love_strategy, water):
+    model = ([.025, 0.], [1.5, 6.], [0., 3.5], [1.02, 2.7]) if water else (
+        [.2, 0.], [2., 5.], [.8, 2.8], [2., 2.6])
+    periods = [1., .7, 2.]
+    options = dict(backend="cuda", search_strategy=strategy, secular=secular,
+                   love_strategy=love_strategy, accuracy="high")
+    with md.Solver(**options) as solver:
+        expected = solver(*model, periods, nmodes=2, wave=wave)
+        assert expected.precision == solver.stats()["precision"] == "float64"
+    with md.Solver(precision="float32", **options) as solver:
+        actual = solver(*model, periods, nmodes=2, wave=wave)
+        assert actual.phase_velocity.dtype == np.float32
+        assert actual.precision == solver.stats()["precision"] == solver.kernel_report()["precision"] == "float32"
+        assert actual.backend_used == "cuda"
+        assert actual.mode_mask.any()
+        np.testing.assert_array_equal(actual.mode_mask, expected.mode_mask)
+        np.testing.assert_array_equal(actual.root_count, expected.root_count)
+        np.testing.assert_allclose(actual.phase_velocity, expected.phase_velocity, rtol=2e-5, atol=3e-6)
+
+
+@pytest.mark.skipif(BACKEND != "cuda", reason="float32 requires adaptive CUDA")
+@pytest.mark.parametrize("water", [False, True])
+def test_float32_rayleigh_does_not_invent_low_velocity_roots(water):
+    models = md.random_model_batch(24, 40, seed=20261110)
+    batch = {key: values[:2].copy() for key, values in models.items()}
+    if water:
+        for key, value in zip(FIELDS, (.04, 1.5, 0., 1.02)):
+            batch[key][:, 0] = value
+    periods = np.geomspace(.3, 10., 24)[[0, 1, 11]]
+    with md.Solver(backend="cuda") as reference, md.Solver(backend="cuda", precision="float32") as solver:
+        expected = reference(**batch, periods=periods, nmodes=4)
+        actual = solver(**batch, periods=periods, nmodes=4)
+    assert actual.mode_mask[:, 0, :].all()
+    np.testing.assert_allclose(actual.phase_velocity[:, 0, :], expected.phase_velocity[:, 0, :], rtol=2e-5)
 
 
 @pytest.mark.parametrize('accuracy',['high','balanced','fast'])
@@ -127,6 +202,8 @@ def test_cli_npz(tmp_path,capsys,secular):
     np.savez(source,thickness=[0.],vp=[6.],vs=[3.5],rho=[2.7],periods=[1.,2.])
     assert main(['doctor'])==0
     doctor=json.loads(capsys.readouterr().out)
+    assert doctor['default_precision']=='float64'
+    assert isinstance(doctor['cuda_float32_available'], bool)
     assert doctor['default_secular_by_backend']=={'cpu':'dunkin','cuda':'fast','uniform':'dunkin'}
     assert doctor['default_secular']==doctor['default_secular_by_backend'].get(doctor['auto_backend'])
     command=['forward',str(source),'--output',str(target),'--backend',BACKEND,
@@ -135,10 +212,24 @@ def test_cli_npz(tmp_path,capsys,secular):
     assert main(command)==0
     out=np.load(target)
     assert out['phase_velocity'].shape==(1,1,2)
+    assert str(out['precision'])=='float64'
     assert out['status'].dtype==np.uint8
     assert str(out['secular'])==(secular or ("fast" if BACKEND=="cuda" else "dunkin"))
     assert str(out['search_strategy'])=="shape_adaptive"
     assert float(out['sampling_rtol'])==.003
+
+
+@pytest.mark.skipif(BACKEND != "cuda", reason="float32 requires adaptive CUDA")
+def test_cli_float32_npz(tmp_path):
+    source = tmp_path / "input.npz"
+    target = tmp_path / "output.npz"
+    np.savez(source, thickness=[0.], vp=[6.], vs=[3.5], rho=[2.7], periods=[1., 2.])
+    assert main(["forward", str(source), "--output", str(target), "--backend", "cuda",
+                 "--precision", "float32", "--nmodes", "1"]) == 0
+    with np.load(target) as out:
+        assert str(out["precision"]) == "float32"
+        assert out["phase_velocity"].dtype == np.float32
+        assert out["mode_mask"].all()
 
 
 def test_functional_conveniences_and_input_validation():

@@ -5,6 +5,123 @@
 > For 0.3.1 use [the shape-adaptive validation report](SHAPE_ADAPTIVE_0_3_1.md).
 > The 0.3.0 results below describe the retained `qe_adaptive` path.
 
+## CUDA FP32 on RTX 5050
+
+The benchmark uses `random_model_batch(B, L, seed=20261110)`,
+`np.geomspace(.3, 10., T)`, four requested modes and the adaptive shape
+search. Wet Rayleigh replaces the first layer with
+`(h, Vp, Vs, rho) = (.04, 1.5, 0., 1.02)`. Times are end-to-end medians of
+12 warm calls per build, interleaved in alternating order on the same RTX
+5050 (`sm_120`, CUDA 12.9). The previous FP32 build used the FP64 secular
+recurrence at low Rayleigh velocities.
+
+| Wave | Models × layers × periods | Preset | Previous FP32 | Updated FP32 | Speedup |
+|---|---:|---|---:|---:|---:|
+| Dry Rayleigh | 24 × 40 × 24 | balanced | 21.79 ms | 10.68 ms | 2.04× |
+| Wet Rayleigh | 24 × 40 × 24 | balanced | 31.98 ms | 15.56 ms | 2.06× |
+| Love | 24 × 40 × 24 | balanced | 3.34 ms | 3.29 ms | 1.02× |
+| Dry Rayleigh | 192 × 70 × 32 | balanced | 316.73 ms | 110.33 ms | 2.87× |
+| Wet Rayleigh | 192 × 70 × 32 | balanced | 402.30 ms | 159.44 ms | 2.52× |
+| Dry Rayleigh | 8 × 40 × 12 | high | 156.14 ms | 99.31 ms | 1.57× |
+
+Low-velocity Rayleigh samples now use a factored FP32 compound matrix.
+With automatic bounds, the FP32 shape search also reuses the CPU lower
+bound. On the 192-model wet workload, separate profiled calls put GPU
+shape preparation at 27.27 ms before and 0.28 ms after, and GPU shape
+search at 345.08 ms before and 137.57 ms after. Search geometry and density
+sampling still use FP64.
+
+The mode masks and root counts matched FP64 across the six workloads,
+with 56,448 finite entries and no unresolved traces. One balanced dry
+trace differed in the fourth mode in both FP32 builds. The high preset
+in both precisions recovered the close pair missed by balanced FP64 on
+that trace. Excluding that rank difference, the maximum relative error
+was `1.26e-6`. On the eight independent close-root witnesses in
+`tests/data/witness_*.npz`, high FP32 recovered the requested prefix in
+six cases and marked two unresolved. High FP64 recovered all eight.
+
+### Shape-search update for FP32 high and balanced
+
+The RTX 5050 comparison reuses the same inputs, CUDA 12.9 and the
+12-call interleaved protocol. The baseline is the FP32 build with the
+factored low-velocity recurrence. The thin-layer batches use seed
+`20261111`, `h_min=.02`, `h_max=.25`, `lvz_prob=.5` and periods from
+.15 to 10 s. Each batch requests four modes.
+
+| Wave | Models × layers × periods | Preset | Previous FP32 | Updated FP32 | Trace fallbacks |
+|---|---:|---|---:|---:|---:|
+| Dry Rayleigh | 8 × 40 × 12 | high | 101.15 ms | 83.57 ms | 60 → 0 |
+| Dry Rayleigh | 24 × 40 × 24 | balanced | 11.04 ms | 11.66 ms | 11 → 0 |
+| Wet Rayleigh | 24 × 40 × 24 | balanced | 16.06 ms | 16.06 ms | 0 → 0 |
+| Love | 24 × 40 × 24 | balanced | 3.25 ms | 3.25 ms | 0 → 0 |
+| Dry Rayleigh | 192 × 70 × 32 | balanced | 111.72 ms | 109.85 ms | 108 → 0 |
+| Wet Rayleigh | 192 × 70 × 32 | balanced | 163.07 ms | 165.87 ms | 2 → 0 |
+| Thin dry Rayleigh | 48 × 16 × 48 | balanced | 40.49 ms | 41.36 ms | 193 → 0 |
+| Thin Love | 48 × 16 × 48 | balanced | 6.48 ms | 6.55 ms | 0 → 0 |
+
+The table counts entries into the dense ladder for `high` and into the
+logarithmic observation grid for `balanced`. In the high batch,
+evaluations fell from 1,480,774 to 204,748. One of 96 traces triggered
+the FP64 shape recheck, which took 33.22 ms in a separate profiled call.
+The prior upstream FP64 timing on these high inputs was 53.70 ms.
+
+In the eight timing workloads, all 68,508 finite slots and root counts
+matched upstream FP64. One known balanced ordinal difference arose because
+the upstream balanced run skipped a close pair; both high solvers resolved
+it. For the corresponding roots, the velocity difference was 1.25 mm/s
+at P99 and 7.32 mm/s at the maximum, with a maximum relative difference
+of `5.79e-6`.
+
+The 11 independent Rayleigh fixtures provide 49 requested roots. High
+FP32 recovered 30 roots in six complete traces before this update and all
+49 afterward. Six of these deliberately difficult traces triggered a
+per-trace FP64 check. Of the five previously unresolved traces, three
+converged on FP32 secular evaluations and two used the FP64 recheck.
+Maximum relative velocity error on the recovered prefix was `1.82e-7`.
+Balanced improved from 34 to 36 one-to-one matches and from three to
+four complete prefixes, using FP32 secular evaluations throughout.
+
+## FP64 model preparation on YAOLAB
+
+The A800 80 GB PCIe ran CUDA 12.6 with five requested modes and
+`shape_adaptive`. Times are wall-clock medians of 12 warm calls per build
+and workload, with alternating order. The upstream baseline is `3db2451`.
+
+| Wave | Models × layers × periods | Preset | Upstream | Updated | Speedup | Reported roots |
+|---|---:|---|---:|---:|---:|---:|
+| Dry Rayleigh | 2,048 × 24 × 1 | balanced | 48.23 ms | 15.88 ms | 3.04× | 5,168 |
+| Dry Rayleigh | 8 × 8 × 28 | balanced | 2.31 ms | 2.27 ms | 1.02× | 784 |
+| Dry Rayleigh | 64 × 24 × 64 | balanced | 18.78 ms | 17.82 ms | 1.05× | 14,678 |
+| Wet Rayleigh | 24 × 12 × 40 | high | 15.22 ms | 15.06 ms | 1.01× | 2,686 |
+| Love | 64 × 24 × 64 | balanced | 17.23 ms | 17.29 ms | 0.996× | 13,373 |
+
+In table order, the generated batches use seeds `20261110+i`, minimum
+layer thicknesses `[.04, .1, .04, .04, .04]` km and maximum periods
+`[3., 2.5, 10., 8., 10.]` s. All use `h_max=.25` km and
+`lvz_prob=.5`. Periods are logarithmically spaced from .15 s to the
+maximum, or set to the maximum for the single-period batch. Wet Rayleigh
+replaces the first layer with `(.08, 1.5, 0., 1.02)`.
+
+The number of secular evaluations and all seven result arrays matched
+bitwise across the paired runs. Separate profiled calls show where the
+time went. These stage readings are separate from the medians above.
+
+| Workload | Stage | Upstream | Updated |
+|---|---|---:|---:|
+| 2,048-model dry Rayleigh | Host bounds | 37.72 ms | 5.43 ms |
+| 2,048-model dry Rayleigh | GPU shape search | 8.46 ms | 8.11 ms |
+| 64-model dry Rayleigh | Host bounds | 1.19 ms | 0.18 ms |
+| 64-model dry Rayleigh | GPU shape search | 16.50 ms | 16.43 ms |
+| Wet Rayleigh | GPU shape search | 13.12 ms | 12.77 ms |
+| Love | GPU phase search | 10.52 ms | 10.36 ms |
+| Love | GPU shape search | 4.15 ms | 4.04 ms |
+
+Bounds are computed once per model. Skipping layers that cannot lower the
+automatic Rayleigh bound saves about 32 ms in the single-period batch. The
+64-period batch amortizes that work across periods and spends most of its
+time in shape search. The wet Rayleigh bound also accounts for the acoustic
+layer, and Love has its own phase search and scan fallback.
+
 ## 0.3.2 experimental fast secular evaluator
 
 `secular="fast"` keeps the released FP64 dispersion algebra but removes scalar

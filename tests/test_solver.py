@@ -17,6 +17,26 @@ FIELDS = ("phase_velocity", "mode_mask", "status", "trace_flags",
 MODEL_FIELDS = ("thickness", "vp", "vs", "rho")
 
 
+_DATA = Path(__file__).parent / "data"
+
+
+@pytest.mark.skipif(BACKEND != "cuda", reason="float32 requires adaptive CUDA")
+@pytest.mark.parametrize("path", sorted(_DATA.glob("witness_*.npz")) + sorted(_DATA.glob("B10000_*.npz")),
+                         ids=lambda p: p.stem)
+def test_float32_high_recovers_independent_rayleigh_roots(path):
+    cropped = path.name.startswith("B10000")
+    options = {"cmin": .2} if cropped else {}
+    with np.load(path) as data, md.Solver(backend="cuda", precision="float32", accuracy="high", **options) as solver:
+        expected = data["reference" if cropped else "reference_hi"].ravel()[:3 if cropped else 5]
+        result = solver(*(data[k] for k in MODEL_FIELDS), data["periods"], nmodes=expected.size)
+        assert solver.stats()["fp64_repair_traces"] == int(bool(result.trace_flags.item() & md.TRACE_FP64_REPAIR))
+    assert not (result.trace_flags.item() & md.TRACE_SEARCH_UNCONVERGED)
+    assert result.phase_velocity.dtype == np.float32
+    actual = result.phase_velocity.ravel()
+    assert np.all(np.diff(actual) > 0.)
+    np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=3e-6)
+
+
 def assert_same(a, b):
     for name in FIELDS:
         x, y = np.asarray(getattr(a, name)), np.asarray(getattr(b, name))

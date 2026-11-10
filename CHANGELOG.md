@@ -1,5 +1,26 @@
 # Changes
 
+## 0.4.0 — 2026-11-10
+
+- Add opt-in CUDA FP32 for adaptive Rayleigh and Love via
+  `Solver(precision="float32")` or `modisp forward --precision float32`.
+  Velocity arrays use `float32`; FP64 remains the default.
+- Factor the low-velocity Rayleigh recurrence to reduce cancellation in
+  FP32. Reuse automatic lower bounds and per-trace coefficients on CUDA.
+- Improve FP32 shape search with a bounded interval stack and
+  precision-aware narrow-interval checks. Balanced retries a full local
+  queue in FP32. High can recheck a bounded set of sign-ambiguous traces
+  in FP64, recorded by `TRACE_FP64_REPAIR` and `fp64_repair_traces`.
+- Skip layers that cannot lower the automatic dry Rayleigh bound, avoid
+  preparing empty CPU traces, and remove unused CUDA sort values.
+- Advance the private native ABI to 8 and require matching 0.4.0 CPU and
+  CUDA packages. CUDA builds include native `sm_120` when supported by
+  the toolkit.
+- On the RTX 5050, the 96-trace FP32 high batch reduced dense-scan entries
+  from 60 to 0. All 49 requested roots across 11 independent difficult
+  cases matched the reference, including six traces that used the capped
+  FP64 recheck. See [measurements and limits](docs/PERFORMANCE.md).
+
 ## 0.3.3 — 2026-10-31
 
 - Add per-Solver FP64 Brent (adaptive default), Chandrupatla and retained legacy refinement on CPU/CUDA. No global algorithm selector.

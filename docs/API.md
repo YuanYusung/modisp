@@ -57,10 +57,11 @@ reuse their native thread pool or device allocation across compatible calls.
 | Option | Default | Meaning |
 |---|---:|---|
 | `backend` | `"auto"` | CUDA when a compatible plugin/device is available, otherwise CPU |
+| `precision` | `"float64"` | `"float32"` selects CUDA adaptive single-precision evaluation and velocity output |
 | `device` | `0` | CUDA ordinal after `CUDA_VISIBLE_DEVICES` mapping |
 | `threads` | up to 8 available CPUs | Persistent CPU worker count, 1–256 |
 | `cmin`, `cmax` | `None` | Automatic range; explicit values define a cropped search window |
-| `c_tol_rel` | preset | FP64 refinement tolerance: high `1e-6`, balanced `1e-5`, fast `1e-4`; an explicit value overrides it |
+| `c_tol_rel` | preset | Relative refinement target: high `1e-6`, balanced `1e-5`, fast `1e-4`; an explicit value overrides it, subject to the evaluator's roundoff floor |
 | `f_accept` | `1.0` | Optional normalized-function acceptance bound |
 | `search_strategy` | `"shape_adaptive"` | Local shape consistency; `"qe_adaptive"` retains 0.3.0; `"uniform"` is legacy CUDA solid Rayleigh only |
 | `sampling_rtol` | preset | Shape-integral consistency tolerance: high `1e-3`, balanced `1e-2`, fast `5e-2`; explicit values apply only to shape search |
@@ -79,6 +80,37 @@ An explicit unavailable CUDA request raises `BackendUnavailableError`.
 Automatic selection records its choice and reason. Version/ABI mismatches raise
 an installation error. Numerical failures never trigger a backend change.
 
+### Precision
+
+`precision="float32"` uses a CUDA plugin built with FP32 support. It works with
+`backend="cuda"` or `backend="auto"`, and both adaptive search strategies.
+If a compatible plugin or device is unavailable, either backend setting raises
+`BackendUnavailableError`. The CPU and legacy uniform solvers accept
+`precision="float64"`.
+
+The FP32 path uses single-precision model coefficients, Dunkin/SH secular
+recurrences and the Love phase evaluator. Search bounds, density sampling and
+bracket coordinates use FP64. Rayleigh samples below one sixteenth of the
+model's maximum Vs use a factored FP32 compound matrix for deeply evanescent
+layers. Factoring the small differences before multiplication reduces the
+low-velocity cancellation seen with the direct matrix. The FP32 path reports
+nonfinite samples through the search diagnostics. Refinement has a roundoff
+floor and the reported velocity array is `float32`. Rounding can move, merge or conceal
+roots in close clusters and near cutoffs. Compare against FP64 when mode
+counts or individual ranks matter.
+
+The FP32 `high` shape search accounts for single-precision roundoff in
+narrow intervals and checks individual representable velocities at its
+resolution limit. Inconsistent signs or multiple roots separated by at most
+eight relative FP32 epsilons can trigger a per-trace FP64 shape recheck.
+Each native chunk permits up to `min(32, max(1, traces // 32))` rechecks.
+When more traces qualify, the chunk uses the existing FP32 search ladder.
+The output stays `float32`; `TRACE_FP64_REPAIR` and
+`stats()["fp64_repair_traces"]` identify attempted rechecks.
+`balanced` processes the initial frontier in parallel. If it fills the
+frontier, that trace retries with a bounded stack in FP32 before the
+observation-grid fallback.
+
 ### Accuracy presets
 
 | Preset | Shape consistency `sampling_rtol` | Default refinement `c_tol_rel` |
@@ -87,7 +119,7 @@ an installation error. Numerical failures never trigger a backend change.
 | `balanced` | `1e-2` | `1e-5` |
 | `fast` | `5e-2` | `1e-4` |
 
-All arithmetic remains FP64. Density and model-anchored critical/interface
+Density and model-anchored critical/interface
 seeds initialize intervals; five-point integral comparisons drive local
 subdivision. High verifies density coordinates directly and does not stop or
 merge based on the observation threshold. Balanced/fast use a coarser density
@@ -120,6 +152,8 @@ close-cluster, ordinal-shift and explicitly unjudged counts.
 `DispersionBatch` contains:
 
 - `phase_velocity`, `mode_mask`, `status`: `[B,nmodes,T]` arrays.
+- `precision`: the dtype of `phase_velocity`, also recorded by `stats()` and
+  the CLI output. Adaptive kernel reports record the selected precision.
 - `period`: a copy of the input periods; `mode`: ascending integers.
 - `trace_flags`, `numerical_flags`, `search_level`, `root_count`: `[B,T]`
   search diagnostics. `numerical_flags` excludes only
@@ -169,6 +203,7 @@ workspace or root-conflict flag.
 | 2048 | `TRACE_APPROXIMATE_SEARCH` | Observation-grid search; close clusters and ordinal ranks may be unresolved |
 | 4096 | `TRACE_CLOSE_ROOT_RISK` | Observed close roots or a sampled hidden-pair trough hint |
 | 8192 | `TRACE_ADAPTIVE_FALLBACK` | Local shape search required the retained 0.3.0 search |
+| 32768 | `TRACE_FP64_REPAIR` | An ambiguous FP32 high trace entered the FP64 shape recheck |
 
 A budget too small for one model raises `MemoryError` before allocation.
 Hardware allocation and driver failures raise explicitly. `stats()` reports
@@ -250,4 +285,4 @@ configured scan and retains `TRACE_LOVE_PHASE_FALLBACK=16384`. Inspect
 `love_phase_accepted` and `love_phase_fallbacks` in stats. The default phase root
 tolerance is `min(c_tol_rel,1e-8)` before original-function refinement. General
 Rayleigh root discovery, preset budgets and close-cluster limitations remain
-as documented above. CPU and CUDA package versions and private ABI 7 must match.
+as documented above. CPU and CUDA package versions and private ABI 8 must match.

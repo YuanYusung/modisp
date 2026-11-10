@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._loader import CudaUnavailable
+from ._loader import CudaUnavailable, VERSION as __version__
 from .models import (
     CANONICAL_MODELS,
     LayeredModel,
@@ -40,8 +40,6 @@ __all__ = [
     "models",
     "cuda",
 ]
-
-__version__ = "0.3.3"
 
 WAVES = ("rayleigh",)
 

@@ -6,11 +6,11 @@ import threading
 import time
 import numpy as np
 from . import _cpu
+from ._loader import ABI_VERSION as _ABI_VERSION, VERSION as __version__
 from ._loader import BackendUnavailableError, CudaUnavailable, load as _load_cuda
 from .models import LayeredModel, CANONICAL_MODELS, random_model_batch, pad_batch, to_batch
 
-__version__ = "0.3.3"
-if _cpu.VERSION!=__version__ or _cpu.ABI_VERSION!=7:raise RuntimeError("CPU package and extension versions differ; reinstall a matching wheel")
+if _cpu.VERSION!=__version__ or _cpu.ABI_VERSION!=_ABI_VERSION:raise RuntimeError("CPU package and extension versions differ; reinstall a matching wheel")
 TRACE_UNRESOLVED_BRACKET=1
 TRACE_RELOCATED=2
 TRACE_SEARCH_UNCONVERGED=4
@@ -26,6 +26,7 @@ TRACE_APPROXIMATE_SEARCH=2048
 TRACE_CLOSE_ROOT_RISK=4096
 TRACE_ADAPTIVE_FALLBACK=8192
 TRACE_LOVE_PHASE_FALLBACK=16384
+TRACE_FP64_REPAIR=32768
 from .reliability import ModeReliabilityFlag, ModeReliability, check_mode_reliability
 
 
@@ -39,6 +40,7 @@ class SolveStatus(IntEnum):
 class DispersionBatch:
     def __init__(self, velocity, periods, nmodes, wave, flags, levels, counts, bounds, backend, reason, accuracy=None, close_root_rtol=.005,search_strategy=None,sampling_rtol=None,secular=None,refinement=None,love_strategy=None):
         self.phase_velocity=velocity
+        self.precision=velocity.dtype.name
         self.refinement=refinement
         self.love_strategy=love_strategy
         self.secular=secular
@@ -107,20 +109,27 @@ def _models(thickness,vp,vs,rho):
 
 
 class Solver:
-    """Reusable FP64 solver; an instance must not be called concurrently.
+    """Reusable phase dispersion solver; use one instance per concurrent caller.
 
     backend='auto' selects an available CUDA plugin, otherwise CPU. threads
     controls the persistent CPU pool. secular=None selects fast on CUDA and
     dunkin on CPU; legacy uniform always defaults to dunkin. Explicit cmin/cmax define a search window
     and consequently the ascending root labels within that window.
+    precision='float32' requires an FP32-capable CUDA plugin and an adaptive
+    strategy. It uses FP32 secular evaluation and returns float32 velocities.
     """
     def __init__(self,nc=512,cmin=None,cmax=None,c_tol_rel=None,f_accept=1.,block=256,
                  search_strategy="shape_adaptive",workspace_bytes=256*1024**2,chunk_size=None,
                  *,backend="auto",device=0,threads=None,profile=False,accuracy=None,
                  adaptive_period_threshold=None,close_root_rtol=.005,sampling_rtol=None,secular=None,
-                 refinement=None,love_strategy="phase"):
+                 refinement=None,love_strategy="phase",precision="float64"):
         if backend not in ("auto","cpu","cuda"):raise ValueError("backend must be auto, cpu or cuda")
         if search_strategy not in ("shape_adaptive","qe_adaptive","uniform"):raise ValueError("invalid search_strategy")
+        if not isinstance(precision, str) or precision not in ("float64", "float32"):
+            raise ValueError("precision must be float64 or float32")
+        if precision == "float32" and (backend == "cpu" or search_strategy == "uniform"):
+            raise ValueError("precision='float32' requires an adaptive CUDA solver")
+        self.precision = precision
         if secular not in (None,"dunkin","fast"):raise ValueError("secular must be None, 'dunkin' or 'fast'")
         if refinement is None:refinement="legacy" if search_strategy=="uniform" else "brent"
         if refinement not in ("legacy","brent","chandrupatla"):raise ValueError("refinement must be legacy, brent or chandrupatla")
@@ -176,13 +185,15 @@ class Solver:
         if self.backend=="cpu":return "cpu","explicit CPU selection"
         try:
             module=_load_cuda()
+            if self.precision == "float32" and not getattr(module, "SUPPORTS_FP32", False):
+                raise BackendUnavailableError("precision='float32' requires an FP32-capable CUDA plugin")
             if not module.available(self.device):raise BackendUnavailableError(f"CUDA device {self.device} is unavailable")
             try:module.set_device(self.device)
             except RuntimeError as exc:raise BackendUnavailableError(f"CUDA device {self.device} initialization failed: {exc}") from exc
             self._module=module
             return "cuda","CUDA plugin and device available"
         except BackendUnavailableError as exc:
-            if self.backend=="cuda":raise
+            if self.backend=="cuda" or self.precision=="float32":raise
             return "cpu",str(exc)
 
     def __call__(self,thickness,vp,vs,rho,periods,nmodes=5,wave="rayleigh",names=None):
@@ -200,6 +211,14 @@ class Solver:
         if np.iscomplexobj(periods):raise ValueError("periods must be real")
         per=np.ascontiguousarray(periods,dtype=np.float64)
         if per.ndim!=1 or not per.size or not np.isfinite(per).all() or np.any(per<=0):raise ValueError("periods must be a finite positive 1-D array")
+        if self.precision == "float32":
+            fp32 = np.finfo(np.float32)
+            max_value, zero_cutoff = float(fp32.max), .5 * float(fp32.smallest_subnormal)
+            for name, values in zip(("thickness", "vp", "vs", "rho"), (h, a, b, r)):
+                if values.max() > max_value or np.any((values > 0.) & (values <= zero_cutoff)):
+                    raise ValueError(f"{name} contains values outside the float32 range")
+            if per.max() > max_value or per.min() < 2. * np.pi / max_value:
+                raise ValueError("periods or their angular frequencies are outside the float32 range")
         if self.profile:timings['input_validation']=time.perf_counter()-started
         selected=time.perf_counter() if self.profile else 0.
         backend,reason=self._select()
@@ -215,7 +234,7 @@ class Solver:
             bounds=_cpu.bounds(h,a,b,r,0,.2 if self.cmin is None else self.cmin,self.cmax)
             flags=old.trace_flags.copy()|TRACE_RANGE_TRUNCATED
             result=DispersionBatch(old.phase_velocity,per,nmodes,wave,flags,np.full((B,per.size),-2,dtype=np.int32),np.sum(old.mode_mask,axis=1,dtype=np.int32),bounds,backend,reason,accuracy="uniform",close_root_rtol=self.close_root_rtol,search_strategy="uniform",secular="dunkin",refinement="legacy")
-            self._last_stats=dict(self._legacy.stats(),accuracy="uniform",close_root_rtol=self.close_root_rtol,secular="dunkin",secular_kernel="dunkin",refinement="legacy",love_strategy=None);self._calls+=1;self.last_result=result
+            self._last_stats=dict(self._legacy.stats(),accuracy="uniform",precision=result.precision,close_root_rtol=self.close_root_rtol,secular="dunkin",secular_kernel="dunkin",refinement="legacy",love_strategy=None);self._calls+=1;self.last_result=result
             return result
         stage=time.perf_counter() if self.profile else 0.
         bounds=_cpu.bounds(h,a,b,r,int(wave=="love"),self.cmin,self.cmax)
@@ -233,13 +252,15 @@ class Solver:
             # Conservatively reserve a compact shared queue for every trace,
             # even though only the resident persistent blocks use it at once.
             cost=8*(6*L+2*1024+4)+2*L*8+(8*2048+4 if self.search_strategy=="shape_adaptive" else 0)+4+per.size*(64*(nmodes+2)+8*nmodes+48+2*cache_points*8+16+shape_queue_bytes)
+            if self.precision == "float32":
+                cost += (6 * L + 1) * np.dtype(np.float32).itemsize
             limit=(self.workspace_bytes-fixed)//cost
         capacity=min(B,limit,self.chunk_size or B)
         if capacity<1:raise MemoryError("workspace_bytes is too small for one model and the backend's fixed workspace; increase the budget or reduce threads")
         threshold=0. if self.adaptive_period_threshold is None else float(self.adaptive_period_threshold)
         resolved_threshold=(float(self.adaptive_period_threshold) if self.adaptive_period_threshold is not None
                             else (1.0 if self.accuracy=="balanced" else (0.63 if self.accuracy=="fast" else 0.0)))
-        key=(backend,self.device,self.threads,capacity,L,per.size,int(nmodes),self.accuracy,threshold,self.close_root_rtol,self.search_strategy,self.sampling_rtol,secular,self.refinement,self.love_strategy)
+        key=(backend,self.device,self.threads,capacity,L,per.size,int(nmodes),self.accuracy,threshold,self.close_root_rtol,self.search_strategy,self.sampling_rtol,secular,self.refinement,self.love_strategy,self.precision)
         # Preserve the high-water capacity for short tail batches. Never retain
         # an allocation that exceeds a subsequently reduced budget/chunk cap.
         compatible=(self._engine_key is not None and self._engine_key[:3]==key[:3]
@@ -253,20 +274,27 @@ class Solver:
             secular_code=0 if secular=="dunkin" else 1
             refinement_code={"legacy":0,"brent":1,"chandrupatla":2}[self.refinement]
             phase_code=int(self.love_strategy=="phase")
-            self._engine=(_cpu.CpuSolver(self.threads,code,threshold,self.close_root_rtol,self.search_strategy=="shape_adaptive",self.sampling_rtol,secular_code,refinement_code,phase_code) if backend=="cpu"
-                          else self._module.QeSolver(capacity,L,per.size,int(nmodes),code,threshold,self.close_root_rtol,self.search_strategy=="shape_adaptive",self.sampling_rtol,secular_code,refinement_code,phase_code))
+            config = (code, threshold, self.close_root_rtol, self.search_strategy == "shape_adaptive",
+                      self.sampling_rtol, secular_code, refinement_code, phase_code)
+            if backend == "cpu":
+                self._engine = _cpu.CpuSolver(self.threads, *config)
+            else:
+                precision_args = (True,) if self.precision == "float32" else ()
+                self._engine = self._module.QeSolver(capacity, L, per.size, int(nmodes), *config, *precision_args)
             self._engine_key=key
         else:capacity=self._engine_key[3]
         if self.profile:timings['engine_prepare']=time.perf_counter()-stage
         stage=time.perf_counter() if self.profile else 0.
-        velocity=np.empty((B,nmodes,per.size));flags=np.empty((B,per.size),dtype=np.uint32)
+        velocity=np.empty((B,nmodes,per.size),dtype=self.precision);flags=np.empty((B,per.size),dtype=np.uint32)
         levels=np.empty((B,per.size),dtype=np.int32);counts=np.empty_like(levels);stats={};chunks=0
+        canonical_lower = (True,) if (self.precision == "float32" and self.cmin is None and
+                                      getattr(self._module, "SUPPORTS_CANONICAL_LOWER", False)) else ()
         if self.profile:timings['output_allocate']=time.perf_counter()-stage
         for start in range(0,B,capacity):
             end=min(B,start+capacity)
             args=(h[start:end],a[start:end],b[start:end],r[start:end],per,bounds[start:end])
             if backend=="cpu":out=self._engine.run(*args,int(nmodes),int(wave=="love"),self.cmin is None,self.c_tol_rel,self.f_accept,self.profile)
-            else:out=self._engine.run(*args,self.c_tol_rel,self.f_accept,int(wave=="love"),self.cmin is None,self.profile)
+            else:out=self._engine.run(*args,self.c_tol_rel,self.f_accept,int(wave=="love"),self.cmin is None,self.profile,*canonical_lower)
             stage=time.perf_counter() if self.profile else 0.
             velocity[start:end],flags[start:end],part,levels[start:end],counts[start:end]=out
             if self.profile:timings['chunk_assembly']=timings.get('chunk_assembly',0.)+time.perf_counter()-stage
@@ -280,8 +308,13 @@ class Solver:
             chunks+=1
         if self.cmin is not None or self.cmax is not None:flags|=TRACE_RANGE_TRUNCATED
         counts[(flags&TRACE_SEARCH_UNCONVERGED)!=0]=-1
-        stats.update(backend=backend,strategy=("shape_adaptive" if self.search_strategy=="shape_adaptive" else ("qe_adaptive" if self.accuracy=="high" else "observation_log")),requested_strategy=self.search_strategy,sampling_rtol=self.sampling_rtol,accuracy=self.accuracy,secular=secular,secular_kernel=("sh" if wave=="love" else "dunkin_fast" if secular=="fast" else "dunkin"),
-                     refinement=self.refinement,love_strategy=self.love_strategy if wave=="love" else None,love_phase_tolerance=min(self.c_tol_rel,1e-8) if wave=="love" and self.love_strategy=="phase" else None,
+        love_phase_tolerance = None
+        if wave == "love" and self.love_strategy == "phase":
+            love_phase_tolerance = min(self.c_tol_rel, 1e-8)
+            if self.precision == "float32":
+                love_phase_tolerance = max(8. * float(np.finfo(np.float32).eps), love_phase_tolerance)
+        stats.update(backend=backend,precision=self.precision,strategy=("shape_adaptive" if self.search_strategy=="shape_adaptive" else ("qe_adaptive" if self.accuracy=="high" else "observation_log")),requested_strategy=self.search_strategy,sampling_rtol=self.sampling_rtol,accuracy=self.accuracy,secular=secular,secular_kernel=("sh" if wave=="love" else "dunkin_fast" if secular=="fast" else "dunkin"),
+                     refinement=self.refinement,love_strategy=self.love_strategy if wave=="love" else None,love_phase_tolerance=love_phase_tolerance,
                      period_threshold=resolved_threshold,early_acceptance_enabled=False,approximate_search_enabled=self.accuracy in ("balanced","fast"),velocity_step_rtol=(None if self.search_strategy=="shape_adaptive" else self.close_root_rtol*(.5 if self.accuracy=="balanced" else 1.) if self.accuracy!="high" else None),close_root_rtol=self.close_root_rtol,refinement_tolerance=self.c_tol_rel,chunks=chunks,threads=self.threads if backend=="cpu" else 0)
         stats.update(approximate_traces=int(np.count_nonzero(flags&TRACE_APPROXIMATE_SEARCH)),close_root_risk_traces=int(np.count_nonzero(flags&TRACE_CLOSE_ROOT_RISK)))
         stats['close_cluster_leaf_rtol']=self.close_root_rtol*(.5 if self.accuracy=="balanced" else 1.) if self.search_strategy=="shape_adaptive" and self.accuracy!="high" else None
@@ -310,6 +343,8 @@ class Solver:
     def kernel_report(self):
         backend=self.last_result.backend_used if self.last_result is not None else self.backend
         secular=self.last_result.secular if self.last_result is not None else self._resolved_secular(backend)
+        precision = self.last_result.precision if self.last_result is not None else self.precision
+        precision_args = (True,) if precision == "float32" else ()
         if backend=="cuda" and self.search_strategy=="uniform":return {"backend":"cuda","precision":"float32 scan / float64 refinement","accuracy":"uniform","secular":"dunkin","secular_kernel":"dunkin","refinement":"legacy","love_strategy":None,"legacy":self._legacy.kernel_report()}
         secular_kernel=("sh" if self.last_result is not None and self.last_result.wave=="love"
                         else "dunkin_fast" if secular=="fast" else "dunkin" if secular=="dunkin" else None)
@@ -319,14 +354,24 @@ class Solver:
             if self.last_result is not None and self.last_result.wave=="love" and self.love_strategy=="phase":
                 if backend=="cuda" and self._key is not None:
                     report["scan_kernel_report"]=dict(report)
-                    report.update(self._module.love_phase_kernel_report(self._key[1]))
+                    report.update(self._module.love_phase_kernel_report(self._key[1], *precision_args))
                 report["scan_kernel"]=report.get("search_kernel")
                 report["search_kernel"]="love_phase_with_scan_fallback"
                 report["love_phase_accepted"]=self._last_stats.get("love_phase_accepted",0)
                 report["love_phase_fallbacks"]=self._last_stats.get("love_phase_fallbacks",0)
             return report
-        if backend=="cuda" and self._key is not None:return actual(dict(self._module.qe_kernel_report(self._key[1],int(self.accuracy!="high"),self.search_strategy=="shape_adaptive"),backend=backend,precision="float64",accuracy=self.accuracy,secular=secular,secular_kernel=secular_kernel,period_threshold=resolved,sampling_capacity=2048,cache_points_per_trace=256,close_root_rtol=self.close_root_rtol,refinement_tolerance=self.c_tol_rel,refinement=self.refinement,love_strategy=self.love_strategy))
-        return actual({"backend":backend,"precision":"float64","accuracy":self.accuracy,"secular":secular,"secular_kernel":secular_kernel,"period_threshold":resolved,"close_root_rtol":self.close_root_rtol,"refinement_tolerance":self.c_tol_rel,"refinement":self.refinement,"love_strategy":self.love_strategy,"search_kernel":"shape_adaptive" if self.search_strategy=="shape_adaptive" else ("qe_adaptive" if self.accuracy=="high" else "observation_log"),"threads":self.threads,"module":_cpu.__file__})
+        report = dict(backend=backend, precision=precision, accuracy=self.accuracy, secular=secular,
+                      secular_kernel=secular_kernel, period_threshold=resolved, close_root_rtol=self.close_root_rtol,
+                      refinement_tolerance=self.c_tol_rel, refinement=self.refinement, love_strategy=self.love_strategy)
+        if backend == "cuda" and self._key is not None:
+            report.update(self._module.qe_kernel_report(self._key[1], int(self.accuracy != "high"),
+                                                        self.search_strategy == "shape_adaptive", *precision_args))
+            report.update(sampling_capacity=2048, cache_points_per_trace=256)
+        else:
+            search_kernel = "qe_adaptive" if self.accuracy == "high" else "observation_log"
+            report.update(search_kernel="shape_adaptive" if self.search_strategy == "shape_adaptive" else search_kernel,
+                          threads=self.threads, module=_cpu.__file__)
+        return actual(report)
     def close(self):
         with self._lock:
             if self._engine is not None and hasattr(self._engine,"close"):self._engine.close()

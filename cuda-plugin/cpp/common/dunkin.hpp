@@ -5,8 +5,7 @@
 // Units: km, km/s, g/cm^3, rad/s, rad/km. Last-layer thickness is ignored.
 // water=1 selects a genuine top acoustic layer with a pressure-free water
 // surface and continuous normal traction/displacement at the fluid/solid base.
-// The production solver uses normalized FP64. Other template instantiations
-// are retained only for legacy uniform CUDA and diagnostic precision probes.
+// Normalized recurrence shared by the FP64 and FP32 evaluators.
 
 #ifndef MODISP_COMMON_DUNKIN_HPP
 #define MODISP_COMMON_DUNKIN_HPP
@@ -32,6 +31,7 @@ template<class T> MD_HD T shape_small(){if constexpr(sizeof(T)==8)return T(1e-30
 #define MD_COS(x) cos(x)
 #define MD_EXP(x) exp(x)
 #define MD_EXP2(x) exp2(x)
+#define MD_EXPM1(x) expm1(x)
 #define MD_SINCOS(x, sp, cp) sincos((x), (sp), (cp))
 #else
 #define MD_FABS(x) std::fabs(x)
@@ -41,6 +41,7 @@ template<class T> MD_HD T shape_small(){if constexpr(sizeof(T)==8)return T(1e-30
 #define MD_COS(x) std::cos(x)
 #define MD_EXP(x) std::exp(x)
 #define MD_EXP2(x) std::exp2(x)
+#define MD_EXPM1(x) std::expm1(x)
 #define MD_SINCOS(x, sp, cp) \
   do { *(sp) = std::sin(x); *(cp) = std::cos(x); } while (0)
 #endif
@@ -229,6 +230,18 @@ MD_HD void dunkin_dnka(T wvno2, T gam, T gammk, T rho, const VarOut<T> &v,
 // divisions disappear.  The caller owns normalization.
 // ---------------------------------------------------------------------------
 template <typename T>
+MD_HD void dunkin_contract(T wvno2,T A,T B,T C,T D,T E,T F,T G,T H,T I,T J,T K,T L,T M,T N,T O,
+                           const T e[5],T ee[5]) {
+  const T e0=e[0],e1=e[1],e2=e[2],e3=e[3],e4=e[4];
+  const T e2t=e2*(-T(2)*wvno2);
+  ee[0] = MD_FMA(A, e0, MD_FMA(E, e1, MD_FMA(F, e3, MD_FMA(O, e4, J * e2t))));
+  ee[1] = MD_FMA(D, e0, MD_FMA(B, e1, MD_FMA(N, e3, MD_FMA(F, e4, H * e2t))));
+  ee[2] = MD_FMA(I, e0, MD_FMA(G, e1, MD_FMA(K, e2, MD_FMA(H, e3, J * e4))));
+  ee[3] = MD_FMA(C, e0, MD_FMA(M, e1, MD_FMA(B, e3, MD_FMA(E, e4, G * e2t))));
+  ee[4] = MD_FMA(L, e0, MD_FMA(C, e1, MD_FMA(D, e3, MD_FMA(A, e4, I * e2t))));
+}
+
+template <typename T>
 MD_HD void dunkin_apply_fast(T wvno2, T gam, T gammk, T rhol,
                              const VarOut<T> &v, T irho, T irho2,
                              const T e[5], T ee[5]) {
@@ -245,7 +258,6 @@ MD_HD void dunkin_apply_fast(T wvno2, T gam, T gammk, T rhol,
   const T rho2 = rhol * rhol;
   const T a0pq = a0 - cpcq;
   const T wvno4 = wvno2 * wvno2;
-  const T t = -T(2) * wvno2;
 
   // Distinct entries of the compound matrix, in the row/column layout used by
   // dunkin_dnka:
@@ -268,15 +280,54 @@ MD_HD void dunkin_apply_fast(T wvno2, T gam, T gammk, T rhol,
                 gamm1 * gm1sq * wy) * rhol;
   const T K = a0 + T(2) * (cpcq - A);
 
-  const T e0 = e[0], e1 = e[1], e2 = e[2], e3 = e[3], e4 = e[4];
-  const T e2t = e2 * t;
-  // Explicit FMA keeps the fast path independent of the translation unit's
-  // -ffp-contract setting; the baseline path remains contract-off.
-  ee[0] = MD_FMA(A, e0, MD_FMA(E, e1, MD_FMA(F, e3, MD_FMA(O, e4, J * e2t))));
-  ee[1] = MD_FMA(D, e0, MD_FMA(B, e1, MD_FMA(N, e3, MD_FMA(F, e4, H * e2t))));
-  ee[2] = MD_FMA(I, e0, MD_FMA(G, e1, MD_FMA(K, e2, MD_FMA(H, e3, J * e4))));
-  ee[3] = MD_FMA(C, e0, MD_FMA(M, e1, MD_FMA(B, e3, MD_FMA(E, e4, G * e2t))));
-  ee[4] = MD_FMA(L, e0, MD_FMA(C, e1, MD_FMA(D, e3, MD_FMA(A, e4, I * e2t))));
+  dunkin_contract(wvno2,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,e,ee);
+}
+
+template <typename T>
+struct EvanescentPair {
+  T p,s,R,loss,g,contrast;
+};
+
+template <typename T>
+MD_HD EvanescentPair<T> evanescent_pair(T c,T vp,T vs) {
+  const T cp=c/vp,cs=c/vs,u=cp*cp,v=cs*cs;
+  const T p=MD_SQRT(T(1)-u),s=MD_SQRT(T(1)-v),R=p*s;
+  // Rationalize 1 - sqrt((1-u)(1-v)); it can round to zero directly.
+  return {p,s,R,(u+(T(1)-u)*v)/(T(1)+R),T(2)/v,v-u};
+}
+
+// When both waves are deeply evanescent, factor differences before
+// multiplying by powers of g = 2(Vs/c)^2. This is the same compound matrix.
+template <typename T>
+MD_HD void dunkin_apply_evanescent(T k,T k2,T h,T rho,T irho,T irho2,
+                                   const EvanescentPair<T> &v,const T e[5],T ee[5]) {
+  const T kh=k*h,q=kh*v.s;
+  T sp=T(.5),sq=T(.5),a0=T(0),delta=T(0),gap=T(0);
+  if(q<T(16)){
+    const T pq=kh*v.contrast/(v.p+v.s);
+    const T eq=MD_EXP(-q),diff=-eq*MD_EXPM1(-pq);
+    sp=-T(.5)*MD_EXPM1(-T(2)*(q+pq));
+    sq=-T(.5)*MD_EXPM1(-T(2)*q);
+    a0=eq*(eq-diff);
+    delta=-T(.5)*diff*(T(2)*eq-diff); // cosp*sq - cosq*sp
+    gap=T(.5)*diff*diff;             // cosp*cosq - a0 - sp*sq
+  }
+  const T g=v.g,gm1=g-T(1),twgm1=g+gm1;
+  const T scaled_loss=g*v.loss;
+  const T d1=T(1)-scaled_loss,d2=g*(T(2)-scaled_loss)-T(1);
+  const T ps=sp*sq,psr=ps/v.R,y=(T(1)-sq)*sp,x=(T(1)-sp)*sq;
+  const T q1=T(2)*g*gm1*gap,q2=psr*d1*d1;
+  const T kp=k/v.p,ks=k/v.s,ip=T(1)/(k*v.p),is=T(1)/(k*v.s);
+  const T B=(T(1)-sp)*(T(1)-sq),A=B+q1-q2;
+  const T D=ks*(delta+v.loss*y)*irho,C=kp*(delta-v.loss*x)*irho;
+  const T G=(g*v.R*delta+d1*y)*ip,H=(gm1*delta-d1*y)*is;
+  const T E=(g*g*v.R*delta+d2*y)*ip*rho,F=(gm1*gm1*delta-d2*y)*is*rho;
+  const T I=(twgm1*gap+psr*v.loss*d1)*irho;
+  const T L=k2*(T(2)*gap-psr*v.loss*v.loss)*irho2;
+  const T J=(g*gm1*twgm1*gap-psr*d1*d2)*rho/k2;
+  const T O=(g*gm1*q1-psr*d2*d2)*rho*rho/k2;
+  const T K=a0+T(2)*(q2-q1),M=-ps*(v.s/v.p),N=-ps*(v.p/v.s);
+  dunkin_contract(k2,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,e,ee);
 }
 
 // ---------------------------------------------------------------------------
@@ -388,9 +439,9 @@ MD_HD T dunkin_secular(const T *d, const T *a, const T *b, const T *rho,
 //   * density reciprocals are prepared once per model;
 //   * the compound matrix is contracted without materializing `ca`;
 //   * max-normalization uses one reciprocal and five multiplications.
-// No FP32 or approximation is introduced.
+// The caller selects the arithmetic precision through T.
 // ---------------------------------------------------------------------------
-template <typename T, bool PREPARED>
+template <typename T, bool PREPARED, bool STABLE_LOW = false>
 MD_HD T dunkin_secular_fast(const T *d, const T *a, const T *b, const T *rho,
                             int nlayer, T wvno, T omega, int water = 0,
                             bool clamp_omega = true,
@@ -403,12 +454,13 @@ MD_HD T dunkin_secular_fast(const T *d, const T *a, const T *b, const T *rho,
   if (clamp_omega && omega < T(1.0e-4)) omega = T(1.0e-4);
   const T wvno2 = wvno * wvno;
   const int last = nlayer - 1;
+  const T c = STABLE_LOW ? omega / wvno : T(0);
 
-  const T xka0 = PREPARED ? prepared_ka[last] : omega / a[last];
-  const T xkb0 = PREPARED ? prepared_kb[last] : omega / b[last];
+  const T xka0 = (PREPARED || prepared_ka) ? prepared_ka[last] : omega / a[last];
+  const T xkb0 = (PREPARED || prepared_kb) ? prepared_kb[last] : omega / b[last];
   T ra = MD_SQRT((wvno + xka0) * MD_FABS(wvno - xka0));
   T rb = MD_SQRT((wvno + xkb0) * MD_FABS(wvno - xkb0));
-  T gammk = PREPARED ? prepared_gammk[last] : T(2) * (b[last] / omega) * (b[last] / omega);
+  T gammk = (PREPARED || prepared_gammk) ? prepared_gammk[last] : T(2) * (b[last] / omega) * (b[last] / omega);
   T gam = gammk * wvno2;
   const T gamm1 = gam - T(1);
   const T rho_hs = rho[last];
@@ -419,32 +471,44 @@ MD_HD T dunkin_secular_fast(const T *d, const T *a, const T *b, const T *rho,
   e[2] = rho_hs * (gamm1 - gammk * ra * rb);
   e[3] = rho_hs * rb;
   e[4] = wvno2 - ra * rb;
+  if constexpr (STABLE_LOW) {
+    if(c < T(.25)*b[last]){
+      const auto pair=evanescent_pair(c,a[last],b[last]);
+      const T d1=T(1)-pair.g*pair.loss;
+      e[0]=rho_hs*rho_hs*(T(1)-pair.g*(T(1)+d1));
+      e[1]=-rho_hs*wvno*pair.p;
+      e[2]=-rho_hs*d1;
+      e[3]=rho_hs*wvno*pair.s;
+      e[4]=wvno2*pair.loss;
+    }
+  }
 
   for (int m = nlayer - 2; m >= water; --m) {
-    const T xka = PREPARED ? prepared_ka[m] : omega / a[m];
-    const T xkb = PREPARED ? prepared_kb[m] : omega / b[m];
-    gammk = PREPARED ? prepared_gammk[m] : T(2) * (b[m] / omega) * (b[m] / omega);
-    gam = gammk * wvno2;
-    ra = MD_SQRT((wvno + xka) * MD_FABS(wvno - xka));
-    rb = MD_SQRT((wvno + xkb) * MD_FABS(wvno - xkb));
-
-    const T dpth = d[m];
     const T rhol = rho[m];
-    const T p = ra * dpth;
-    const T q = rb * dpth;
-    const VarOut<T> v = dunkin_var<T, true>(p, q, ra, rb, wvno, xka, xkb, dpth);
-    // Density constants are model-wide and can be supplied even when the
-    // caller does not cache the per-frequency wave numbers.
     const T irho = prepared_irho ? prepared_irho[m] : T(1) / rhol;
     const T irho2 = prepared_irho2 ? prepared_irho2[m] : irho * irho;
-
     T ee[5];
-    dunkin_apply_fast<T>(wvno2, gam, gammk, rhol, v, irho, irho2, e, ee);
+    if (STABLE_LOW && c < T(.25)*b[m]) {
+      dunkin_apply_evanescent(wvno,wvno2,d[m],rhol,irho,irho2,evanescent_pair(c,a[m],b[m]),e,ee);
+    } else {
+      const T xka = (PREPARED || prepared_ka) ? prepared_ka[m] : omega / a[m];
+      const T xkb = (PREPARED || prepared_kb) ? prepared_kb[m] : omega / b[m];
+      gammk = (PREPARED || prepared_gammk) ? prepared_gammk[m] : T(2) * (b[m] / omega) * (b[m] / omega);
+      gam = gammk * wvno2;
+      ra = MD_SQRT((wvno + xka) * MD_FABS(wvno - xka));
+      rb = MD_SQRT((wvno + xkb) * MD_FABS(wvno - xkb));
+
+      const T dpth = d[m];
+      const T p = ra * dpth;
+      const T q = rb * dpth;
+      const VarOut<T> v = dunkin_var<T, true>(p, q, ra, rb, wvno, xka, xkb, dpth);
+      dunkin_apply_fast<T>(wvno2, gam, gammk, rhol, v, irho, irho2, e, ee);
+    }
 
     T t1 = T(0);
 #pragma unroll
     for (int i = 0; i < 5; ++i) t1 = MD_FMAX(t1, MD_FABS(ee[i]));
-    if (t1 < T(1.0e-40)) t1 = T(1);
+    if (t1 < (sizeof(T)==sizeof(float) ? T(1.0e-30) : T(1.0e-40))) t1 = T(1);
     // One reciprocal replaces five divisions. This keeps the same scale as
     // the released path, so f_accept and the shape feature retain their
     // meaning; only the last-bit rounding differs.

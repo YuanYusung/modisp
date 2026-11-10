@@ -16,6 +16,8 @@ def main(argv=None):
     forward.add_argument("--output",required=True)
     forward.add_argument("--wave",choices=["rayleigh","love"],default="rayleigh")
     forward.add_argument("--backend",choices=["auto","cpu","cuda"],default="auto")
+    forward.add_argument("--precision", choices=["float64", "float32"], default="float64",
+                         help="secular arithmetic precision (float32 requires adaptive CUDA)")
     forward.add_argument("--nmodes",type=int,default=3)
     forward.add_argument("--threads",type=int)
     forward.add_argument("--device",type=int,default=0)
@@ -48,6 +50,7 @@ def main(argv=None):
 
     if args.command=="doctor":
         data=dict(version=__version__,python=sys.executable,cpu_module=_cpu.__file__,
+                  default_precision="float64",cuda_float32_available=False,
                   default_accuracy="balanced",default_refinement="brent",default_love_strategy="phase",refinement_options=["legacy","brent","chandrupatla"],default_search_strategy="shape_adaptive",
                   default_secular_by_backend={"cpu":"dunkin","cuda":"fast","uniform":"dunkin"},secular_options=["dunkin","fast"],
                   private_abi=int(_cpu.ABI_VERSION),sampling_capacity=2048)
@@ -55,6 +58,7 @@ def main(argv=None):
             module=_load_cuda();available=bool(module.available(0));data.update(cuda_module=module.__file__,cuda_available=available,auto_backend="cuda" if available else "cpu")
             if available:
                 module.set_device(0);free,total=module.memory_info();data.update(cuda_device=module.device_name(),free_device_bytes=free,total_device_bytes=total)
+                data["cuda_float32_available"] = bool(getattr(module, "SUPPORTS_FP32", False))
         except BackendUnavailableError as exc:data.update(cuda_available=False,cuda_reason=str(exc),auto_backend="cpu")
         except RuntimeError as exc:data.update(cuda_available=False,cuda_reason=str(exc),auto_backend="error")
         data["default_secular"]=data["default_secular_by_backend"].get(data["auto_backend"])
@@ -64,7 +68,8 @@ def main(argv=None):
     with Solver(backend=args.backend,threads=args.threads,device=args.device,cmin=args.cmin,cmax=args.cmax,
                 accuracy=args.accuracy,close_root_rtol=args.close_root_rtol,c_tol_rel=args.c_tol_rel,
                 search_strategy=args.search_strategy,sampling_rtol=args.sampling_rtol,
-                secular=args.secular,refinement=args.refinement,love_strategy=args.love_strategy) as solver:
+                secular=args.secular,refinement=args.refinement,love_strategy=args.love_strategy,
+                precision=args.precision) as solver:
         out=solver(**model,periods=periods,nmodes=args.nmodes,wave=args.wave)
         diagnostics={}
         if args.check_continuity:
@@ -73,7 +78,7 @@ def main(argv=None):
         np.savez_compressed(args.output,**diagnostics,refinement=np.asarray(out.refinement),love_strategy=np.asarray(out.love_strategy or ""),phase_velocity=out.phase_velocity,periods=out.period,
                             mode_mask=out.mode_mask,status=out.status,trace_flags=out.trace_flags,
                             search_bounds=out.search_bounds,search_level=out.search_level,
-                            root_count=out.root_count,backend=out.backend_used,wave=out.wave,
+                            root_count=out.root_count,backend=out.backend_used,wave=out.wave,precision=out.precision,
                             accuracy=np.asarray(out.accuracy),numerical_flags=out.numerical_flags,
                             approximate_search=out.approximate_search,close_root_mask=out.close_root_mask,
                             potentially_ambiguous=out.potentially_ambiguous,mode_index_uncertain=out.mode_index_uncertain,

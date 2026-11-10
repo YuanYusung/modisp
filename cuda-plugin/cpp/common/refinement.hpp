@@ -4,15 +4,17 @@
 #pragma once
 namespace md {
 MD_HD bool refinement_finite(double x){return x==x&&fabs(x)!=INFINITY;}
-MD_HD double refinement_target(double a,double b,double tol){
-  return fmax(16.*2.220446049250313e-16*fmax(fabs(a),fabs(b)),fmin((b-a)/64.,.125*tol*fmax(fabs(a),fabs(b))));
+template<class M>
+MD_HD double refinement_target(const M &m,double a,double b,double tol){
+  return fmax(coordinate_floor(m)*fmax(fabs(a),fabs(b)),fmin((b-a)/64.,.125*tol*fmax(fabs(a),fabs(b))));
 }
-MD_HD double refine_root(const Medium &m,double w,double a,double b,double fa,double fb,double tol,int &ev){
+template<class M>
+MD_HD double refine_root(const M &m,double w,double a,double b,double fa,double fb,double tol,int &ev){
   if(m.refinement==0)return refine_root_legacy(m,w,a,b,fa,fb,tol,ev);
   if(a==b)return fa==0.?a:NAN;
   if(!refinement_finite(fa)||!refinement_finite(fb)||((fa<0.)==(fb<0.)&&fa!=0.&&fb!=0.))return NAN;
   if(fa==0.)return a;if(fb==0.)return b;
-  const double stop=refinement_target(a,b,tol);
+  const double stop=refinement_target(m,a,b,tol);
   if(m.refinement==2){
     // x1 and x2 bracket; x3 is the displaced endpoint. No residual-only exit.
     double x1=a,x2=b,x3=b,f1=fa,f2=fb,f3=fb,t=.5;

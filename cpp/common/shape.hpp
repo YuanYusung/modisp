@@ -8,39 +8,42 @@ struct ShapeNode {double a,b;ShapeSample s0,sm,s1;int depth;};
 constexpr int shape_queue=32,shape_depth=48,shape_work=524288;
 constexpr int shape_storage_doubles=(2*shape_queue*sizeof(ShapeNode)+2*shape_queue*sizeof(ShapeSample))/sizeof(double);
 
-MD_HD bool shape_ratio(double a,double b,double scale,double eta){
-  const double floor=64.*2.220446049250313e-16*scale;
+MD_HD bool shape_ratio(double a,double b,double scale,double eta,double roundoff){
+  const double floor=roundoff*scale;
   return fabs(a-b)<=eta*fmax(fabs(a+b),floor)+floor;
 }
 
 // The three integral comparisons are used on a signed, smoothly rescaled
 // real secular function. This adapts the paper's magnitude-GRT criterion;
 // cancellation gets a roundoff guard rather than an unchecked 0/0 ratio.
-MD_HD bool shape_three(double a,double b,double c,double d,double e,double eta,double conditioning){
+MD_HD bool shape_three(double a,double b,double c,double d,double e,double eta,double conditioning,double roundoff){
   const double q11=5.*a+8.*c-e,q12=-a+8.*c+5.*e;
   const double q21=2.*a+8.*b+2.*c,q22=2.*c+8.*d+2.*e;
-  return shape_ratio(q11,q21,16.*conditioning,eta)&&shape_ratio(q12,q22,16.*conditioning,eta)&&shape_ratio(q11+q12,q21+q22,32.*conditioning,eta);
+  return shape_ratio(q11,q21,16.*conditioning,eta,roundoff)&&shape_ratio(q12,q22,16.*conditioning,eta,roundoff)&&shape_ratio(q11+q12,q21+q22,32.*conditioning,eta,roundoff);
 }
-MD_HD bool shape_consistent(const ShapeSample *s,double eta,bool variation=true){
+MD_HD bool shape_consistent(const ShapeSample *s,double eta,bool variation=true,
+                            double roundoff=64.*DBL_EPSILON,double absolute_roundoff=0.){
   double scale=0.,nearest=INFINITY,low=INFINITY,high=-INFINITY;
   for(int j=0;j<5;++j){if(!isfinite(s[j].f)||!isfinite(s[j].g))return false;scale=fmax(scale,fabs(s[j].g));nearest=fmin(nearest,fabs(s[j].g));low=fmin(low,s[j].g);high=fmax(high,s[j].g);}
   if(scale==0.)return false;
+  roundoff=fmax(roundoff,absolute_roundoff/scale);
   const double a=s[0].g/scale,b=s[1].g/scale,c=s[2].g/scale,d=s[3].g/scale,e=s[4].g/scale;
-  if(!shape_three(a,b,c,d,e,eta,1.))return false;
+  if(!shape_three(a,b,c,d,e,eta,1.,roundoff))return false;
   if(!variation||(scale<.9&&nearest>.1*scale))return true;
   // A large DC component can hide a weak buried-mode feature in a relative
   // integral test. An apparently smooth approach to zero can also conceal
   // a pair just before the endpoint. Test centered variation in either case;
-  // the conditioning factor carries the original FP64 roundoff into it.
+  // the conditioning factor carries the evaluator's roundoff into it.
   const double span=(high-low)/scale;
-  return span<=1e-8||shape_three((a-c)/span,(b-c)/span,0.,(d-c)/span,(e-c)/span,eta,1./span);
+  return span<=1e-8||shape_three((a-c)/span,(b-c)/span,0.,(d-c)/span,(e-c)/span,eta,1./span,roundoff);
 }
 
 MD_HD bool shape_finite(const ShapeSample &s){return isfinite(s.f)&&isfinite(s.g);}
 
 // Locate a suspicious same-sign extremum. Only original-function brackets
 // produced by this proposal can be accepted as roots; amplitude alone cannot.
-MD_HD ShapeSample shape_minimum(const Medium &m,double omega,double a,double b,double sign,double tol,double &position,int &evals){
+template<class M>
+MD_HD ShapeSample shape_minimum(const M &m,double omega,double a,double b,double sign,double tol,double &position,int &evals){
   constexpr double phi=.6180339887498948482;
   double x=b-phi*(b-a),y=a+phi*(b-a);
   ShapeSample sx=shape_evaluate(m,omega,x),sy=shape_evaluate(m,omega,y);evals+=2;

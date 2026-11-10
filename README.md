@@ -1,8 +1,9 @@
-# modisp 0.3.3
+# modisp 0.4.0
 
-modisp is an FP64, GPU-accelerated package for batched multimode Rayleigh/P–SV
+modisp is a GPU-accelerated package for batched multimode Rayleigh/P–SV
 and Love phase-velocity calculations in 1-D layered elastic media. A portable
 CPU backend and an optional Linux CUDA 12 plugin share one Python interface.
+FP64 is the default. Adaptive CUDA also supports opt-in FP32.
 The package is designed for large-scale forward modeling in model-space
 exploration and synthetic-data workflows. Units are km, km/s, g/cm³ and seconds.
 
@@ -11,7 +12,7 @@ exploration and synthetic-data workflows. Units are km, km/s, g/cm³ and seconds
 Install the wheel matching your Python and platform, or build the CPU source:
 
 ```sh
-python -m pip install /path/to/modisp-0.3.3-<matching-tags>.whl
+python -m pip install /path/to/modisp-0.4.0-<matching-tags>.whl
 modisp doctor
 ```
 
@@ -34,14 +35,25 @@ frozen-fixture checks. The gains depend on workload and hardware. See
 [0.3.2 methods and measurements](docs/SECULAR_FAST_0_3_2.md); the same-host
 accuracy and performance tables below were rerun with the 0.3.2 backend defaults.
 
-## Changes in 0.3.3
+## Changes in 0.4.0
+
+Adaptive CUDA adds `precision="float32"` for Rayleigh and Love. The FP32
+shape search handles narrow intervals at the evaluator's resolution and
+reduces whole-trace scan fallbacks. High may recheck a bounded set of
+sign-ambiguous traces in FP64, while returning `float32` velocities.
+FP64 model preparation skips redundant work, with the largest measured
+gain on batches with many models and few periods. Install both packages
+at version 0.4.0 with private ABI 8. See [release changes](CHANGELOG.md)
+and [performance and numerical limits](docs/PERFORMANCE.md).
+
+## Refinement, Love phase search and mode diagnostics
 
 Adaptive CPU/CUDA solvers default to `refinement="brent"`; choose
 `"chandrupatla"` or `"legacy"` explicitly. Love defaults to
 `love_strategy="phase"`: unwrapped SH phase proposes root intervals, the
 original SH function validates/refines them, and ambiguous phase states fall
 back to the configured scan. Phase roots use a tolerance no larger than
-`1e-8`; the P–SV search presets retain their existing tolerances.
+`1e-8` in FP64; the P–SV search presets retain their existing tolerances.
 
 Cross-period diagnostics run separately, without changing recovered roots:
 
@@ -56,8 +68,8 @@ The checker flags count changes, close roots, nearest-rank ambiguity, jumps,
 prediction discrepancies, duplicate inconsistency and large period gaps.
 Passing these heuristic checks does not certify physical branch identity or
 rule out a smooth missing/wrong branch. See [0.3.3 methods and validation](docs/ROOTS_0_3_3.md).
-The same-host tables below refresh modisp to **0.3.3**; external
-baselines retain their explicitly labeled 2026-10-29 measurements.
+The historical same-host tables below compare **0.3.3** with the external
+baselines measured on 2026-10-29.
 
 ## Unified dispersion interface
 
@@ -99,7 +111,7 @@ selected explicitly. The fast evaluator changes FP64 rounding but not the model,
 acceptance rules; rounding can change the actual adaptive sampling path. `accuracy="balanced"` is the default. Balanced/fast permit flagged ambiguity
 within a configurable close-root scale (`close_root_rtol=0.005`). Their local
 sampling is controlled separately by `sampling_rtol` (high `1e-3`, balanced
-`1e-2`, fast `5e-2`). All three use FP64 evaluation and refinement. Balanced/fast
+`1e-2`, fast `5e-2`). Balanced/fast
 flag approximate searches and expose `mode_index_uncertain` and
 `close_root_mask`. Select `high` to search close roots individually:
 
@@ -107,6 +119,22 @@ flag approximate searches and expose `mode_index_uncertain` and
 with Solver(backend="cuda", accuracy="high") as exact:
     reference = exact(...)
 ```
+
+### CUDA single precision
+
+```python
+result = dispersion(model, periods, nmodes=3, backend="cuda", precision="float32")
+print(result.precision, result.phase_velocity.dtype)
+```
+
+FP32 uses single-precision Rayleigh and Love secular recurrences, including
+the Love phase evaluator, and returns `float32` velocities. It keeps search
+bounds, sampling coordinates and bracket bookkeeping in FP64. A factored
+FP32 compound matrix handles deeply evanescent Rayleigh layers. The
+`high` shape search can recheck a bounded set of ambiguous traces in
+FP64. Both adaptive strategies are supported. Install the base package and CUDA plugin from this
+source tree. Use FP64 when resolving close or ill-conditioned modes.
+See [precision and diagnostics](docs/API.md#precision).
 
 Models with different layer counts can use zero-thickness solid padding.
 Reusable solvers retain workspaces and release the Python GIL during native

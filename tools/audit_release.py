@@ -36,7 +36,8 @@ for f in files:
     if rel=='cpp/common/refinement.hpp':origin+='; Chandrupatla interpolation test adapted from SciPy with full BSD notice retained'
     if rel.startswith('cuda-plugin/cpp/'):origin='exact copy of shared project cpp tree for self-contained plugin sdist'
     if rel in ['cuda-plugin/cpp/common/dunkin.hpp','cuda-plugin/cpp/common/physics.hpp']:license_name='BSD-3-Clause AND MIT'
-    if 'NVIDIA_CUDA_12.6_EULA' in rel:origin='unmodified installed CUDA 12.6 toolkit EULA';license_name='NVIDIA-CUDA-12.6'
+    eula=re.fullmatch(r'cuda-plugin/licenses/NVIDIA_CUDA_(12\.\d+)_EULA\.txt',rel)
+    if eula:origin=f'unmodified installed CUDA {eula[1]} toolkit EULA';license_name=f'NVIDIA-CUDA-{eula[1]}'
     if rel.startswith('tests/data/') and f.suffix=='.npz':origin='self-generated synthetic inputs and independently computed numeric references'
     records.append(dict(path=rel,sha256=hashlib.sha256(data).hexdigest(),bytes=len(data),origin=origin,license=license_name))
 (out/'SOURCE_PROVENANCE.json').write_text(json.dumps(records,indent=2)+'\n');(out/'SOURCE_DIFF.patch').write_text(''.join(diff))

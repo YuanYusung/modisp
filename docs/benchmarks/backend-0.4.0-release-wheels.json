@@ -1,0 +1,32 @@
+{
+  "release_url": "https://github.com/YuanYusung/modisp/releases/tag/v0.4.0",
+  "published_at": "2026-11-10T05:52:04Z",
+  "verified_date": "2026-11-12",
+  "verification_source": "GitHub release asset digest API",
+  "assets": [
+    {
+      "name": "modisp-0.4.0-cp310-cp310-linux_x86_64.whl",
+      "sha256": "669cd853ed03f5eb8d5a37d49f3b54e575541fe09d38139dfd31c3a60ba1782c",
+      "size": 210943,
+      "url": "https://github.com/YuanYusung/modisp/releases/download/v0.4.0/modisp-0.4.0-cp310-cp310-linux_x86_64.whl"
+    },
+    {
+      "name": "modisp-0.4.0-cp312-cp312-linux_x86_64.whl",
+      "sha256": "5b4c86f7011d09d4527b8b38869160f2b73b4f61a3df461c8b00ffa7bf379a41",
+      "size": 213388,
+      "url": "https://github.com/YuanYusung/modisp/releases/download/v0.4.0/modisp-0.4.0-cp312-cp312-linux_x86_64.whl"
+    },
+    {
+      "name": "modisp_cuda12-0.4.0-cp310-cp310-linux_x86_64.whl",
+      "sha256": "6244b37ddd53852155d91219716c4baab1c95367780501e81b5febe092ab5ca3",
+      "size": 3529775,
+      "url": "https://github.com/YuanYusung/modisp/releases/download/v0.4.0/modisp_cuda12-0.4.0-cp310-cp310-linux_x86_64.whl"
+    },
+    {
+      "name": "modisp_cuda12-0.4.0-cp312-cp312-linux_x86_64.whl",
+      "sha256": "f30edb01190d46cdea59f81448823e049e89d6192ff43c65f2482d395d633cb2",
+      "size": 4165858,
+      "url": "https://github.com/YuanYusung/modisp/releases/download/v0.4.0/modisp_cuda12-0.4.0-cp312-cp312-linux_x86_64.whl"
+    }
+  ]
+}

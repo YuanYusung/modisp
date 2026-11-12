@@ -1,0 +1,15 @@
+{
+  "files": {
+    "matrix.json": "3d154665c477d06148a8a0dde9e5de0ff1c2b29c1bdebab6f599848e21948019",
+    "periods1.npy": "63c5b34d6974925a9b87f85b118d59db44b8ee8f6e9e488234c401c1d8cee09a",
+    "periods64.npy": "b715f3ac3478f907b30bbd783aa42871f60abadd0ec853bcfee809e33ee5bd4c",
+    "solid24-models.json": "b7897cb99ea8d45f4e7674994fa5dc15e0bd01f6ee21fb0b5ee0f35269f88350",
+    "solid24.npz": "967cc393056ed54985d8b03733bf201f14fe7c2acdbd835a29e00e3127b60daf",
+    "solid70-models.json": "d8e7a52046c51d576ba8717d26c619094069f5d9bd72a593e1f0442371cbf5c7",
+    "solid70.npz": "99fa6cea4b407df6c18dc0d332193ac0360deed82387119c6fe5a56d041a9190",
+    "wet24-models.json": "2f45eb29ff0b8718ba3b952c6c88c652308e5e165e6fe317c0e6cd60e0ad08e8",
+    "wet24.npz": "4d89bc7abfcde05e5376788e6b78d829e246aa08968d81d67082e32b1dc1641c"
+  },
+  "modisp": "0.4.0",
+  "numpy": "2.2.6"
+}

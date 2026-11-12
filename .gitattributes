@@ -1,0 +1,2 @@
+# Keep generated benchmark receipts downloadable while focusing review on code/tables.
+docs/benchmarks/backend-0.4.0-20261112-*.json linguist-generated=true

@@ -1,0 +1,1544 @@
+{
+  "rows": [
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M01-L",
+      "common_finite_cells": 2,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M01-L",
+      "common_finite_cells": 2,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M01-L",
+      "common_finite_cells": 2,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M01-R",
+      "common_finite_cells": 3,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M01-R",
+      "common_finite_cells": 3,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M01-R",
+      "common_finite_cells": 3,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M02-L",
+      "common_finite_cells": 220,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M02-L",
+      "common_finite_cells": 220,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M02-L",
+      "common_finite_cells": 220,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M02-R",
+      "common_finite_cells": 251,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M02-R",
+      "common_finite_cells": 251,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M02-R",
+      "common_finite_cells": 251,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M03-L",
+      "common_finite_cells": 109,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M03-L",
+      "common_finite_cells": 109,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M03-L",
+      "common_finite_cells": 109,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 8.881784197001252e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 3.463895836830367e-16
+      },
+      "case": "M03-R",
+      "common_finite_cells": 162,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 3.72690619759763e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 1.3463544682709241e-16
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M03-R",
+      "common_finite_cells": 162,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 2.220446049250313e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M03-R",
+      "common_finite_cells": 162,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 2.5077695587762783e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 2.500510909442255e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M04-L",
+      "common_finite_cells": 13147,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 1.3454269880788329e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M04-L",
+      "common_finite_cells": 13147,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M04-L",
+      "common_finite_cells": 13147,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 1.7763568394002505e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M04-R",
+      "common_finite_cells": 14765,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 9.146883348444118e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M04-R",
+      "common_finite_cells": 14765,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 3,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 3
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 2.6645352591003757e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M04-R",
+      "common_finite_cells": 14765,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 3.7160716842452796e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 2.5347723919821874e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M05-L",
+      "common_finite_cells": 3476,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 1.6470042869877618e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M05-L",
+      "common_finite_cells": 3476,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M05-L",
+      "common_finite_cells": 3476,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 8.881784197001252e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M05-R",
+      "common_finite_cells": 5215,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 5.689969187901036e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M05-R",
+      "common_finite_cells": 5215,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 3,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 3
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 8.881784197001252e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M05-R",
+      "common_finite_cells": 5215,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 7.530560400433466e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 3.3297808954557695e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M06-L",
+      "common_finite_cells": 421616,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 3.367287075465826e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M06-L",
+      "common_finite_cells": 421618,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M06-L",
+      "common_finite_cells": 421616,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 4.951594689828198e-14,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M06-R",
+      "common_finite_cells": 473743,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 2.623118706062632e-14,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M06-R",
+      "common_finite_cells": 473773,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 80,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 80
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 4.440892098500626e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "M06-R",
+      "common_finite_cells": 473743,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 7.453501226755983e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 2.3945290195115376e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S01-L",
+      "common_finite_cells": 4096,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 1.0578280066728091e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S01-L",
+      "common_finite_cells": 4096,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S01-L",
+      "common_finite_cells": 4096,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 1.3322676295501878e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S01-R",
+      "common_finite_cells": 4096,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 9.146883348444118e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S01-R",
+      "common_finite_cells": 4096,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 3,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 3
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 1.7763568394002505e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 2.220446049250313e-16
+      },
+      "case": "S01-R",
+      "common_finite_cells": 4096,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 9.939683422078528e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 2.4291457262942486e-16
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 2.5708324358220125e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S02-L",
+      "common_finite_cells": 17274,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 3.258649768849563e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S02-L",
+      "common_finite_cells": 17274,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S02-L",
+      "common_finite_cells": 17274,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 1.7319479184152442e-14,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S02-R",
+      "common_finite_cells": 18659,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 5.3848537942037696e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S02-R",
+      "common_finite_cells": 18659,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 3,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 3
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 4.3298697960381105e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S02-R",
+      "common_finite_cells": 18659,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 1.0729167436310962e-14,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 2.500510909442255e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S03-L",
+      "common_finite_cells": 13147,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 1.3454269880788329e-11,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S03-L",
+      "common_finite_cells": 13147,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S03-L",
+      "common_finite_cells": 13147,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 1.7763568394002505e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S03-R",
+      "common_finite_cells": 14765,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 8.137882651347892e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S03-R",
+      "common_finite_cells": 14765,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G32",
+      "relative_error": {
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 1.7763568394002505e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "S03-R",
+      "common_finite_cells": 14765,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 2.4773803247018622e-15,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 8.881784197001252e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "W01-WR",
+      "common_finite_cells": 14307,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "C64",
+      "relative_error": {
+        "max": 4.303925377831077e-16,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    },
+    {
+      "a800_unresolved_cells": 25,
+      "abs_error_km_s": {
+        "max": 2.384185791015625e-07,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "W01-WR",
+      "common_finite_cells": 14287,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 3,
+      "numerical_flags_mismatches": 1,
+      "path": "G32",
+      "relative_error": {
+        "max": 8.149072615163713e-08,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 1,
+      "rtx5050_unresolved_cells": 30,
+      "search_level_mismatches": 1,
+      "status_mismatches": 5,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 1
+    },
+    {
+      "a800_unresolved_cells": 0,
+      "abs_error_km_s": {
+        "max": 5.5136274657030526e-08,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "case": "W01-WR",
+      "common_finite_cells": 14307,
+      "comparison": "rtx5050 versus a800; neither is independent truth",
+      "mode_mask_mismatches": 0,
+      "numerical_flags_mismatches": 0,
+      "path": "G64",
+      "relative_error": {
+        "max": 6.252342226980263e-08,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "root_count_mismatches": 0,
+      "rtx5050_unresolved_cells": 0,
+      "search_level_mismatches": 0,
+      "status_mismatches": 0,
+      "strict_ordinal_differences": 0,
+      "trace_flags_mismatches": 0
+    }
+  ],
+  "scope": "same frozen inputs and preset/path, different CPU/Python/native builds/CUDA toolkit/GPU architecture; not a hardware-only causal experiment"
+}

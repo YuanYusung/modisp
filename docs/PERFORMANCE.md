@@ -5,6 +5,21 @@
 > For 0.3.1 use [the shape-adaptive validation report](SHAPE_ADAPTIVE_0_3_1.md).
 > The 0.3.0 results below describe the retained `qe_adaptive` path.
 
+## Uniform 0.4.0 backend matrix (2026-11-12)
+
+The [same-input A800 and RTX 5050 report](BACKEND_BENCHMARK_0_4_0.md)
+compares CPU FP64, CUDA FP64 and CUDA FP32 across 57 configurations per host.
+It includes all 12 steady-call samples, IQRs, throughput, separately sampled
+PID VRAM peaks, high-FP64 and independent-reference checks, per-bit diagnostics
+and compact discrepancy snapshots. The A800 measurements had observed GPU
+contention and heavy host load; they are shared-load diagnostic records.
+
+FP32 gains depend on geometry and hardware, and some large-batch FP32 rows
+fail the isolated-root-budget check despite having no numerical failures.
+The wet-high FP32 row retains explicit unresolved traces. Read the numerical
+tables together with times. The historical tables below use different inputs
+and before/after builds and are not rows of this uniform experiment.
+
 ## CUDA FP32 on RTX 5050
 
 The benchmark uses `random_model_batch(B, L, seed=20261110)`,

@@ -1,0 +1,1484 @@
+{
+  "schema_version": 1,
+  "status": "design_not_executed",
+  "repository": "YuanYusung/modisp",
+  "ref": "v0.4.0",
+  "commit": "b27734f7198ea469663e1c0dc809cdd25c19c6ef",
+  "modisp_version": "0.4.0",
+  "modisp_cuda12_version": "0.4.0",
+  "private_abi": 8,
+  "target": {
+    "os": "Linux x86_64",
+    "gpu": "A800 80 GB PCIe",
+    "device_selection": "GPU UUID; CUDA_VISIBLE_DEVICES mapping to device=0",
+    "cpu_threads": 32,
+    "cpu_affinity": "32 physical cores on GPU-local NUMA node; freeze actual CPU list before run",
+    "hardware_is_planned_not_verified": true
+  },
+  "common_solver_options": {
+    "search_strategy": "shape_adaptive",
+    "refinement": "brent",
+    "love_strategy": "phase",
+    "close_root_rtol": 0.005,
+    "f_accept": 1,
+    "cmin": null,
+    "cmax": null,
+    "workspace_bytes": 1073741824,
+    "chunk_size": null,
+    "profile": false
+  },
+  "paths": [
+    {
+      "id": "C64",
+      "backend": "cpu",
+      "precision": "float64",
+      "threads": 32,
+      "secular": "dunkin"
+    },
+    {
+      "id": "G64",
+      "backend": "cuda",
+      "precision": "float64",
+      "device": 0,
+      "secular": "fast"
+    },
+    {
+      "id": "G32",
+      "backend": "cuda",
+      "precision": "float32",
+      "device": 0,
+      "secular": "fast"
+    }
+  ],
+  "inputs": {
+    "generator": "modisp.random_model_batch from the pinned source",
+    "common_options": {
+      "vs_min": 0.6,
+      "vs_max": 3.6,
+      "vp_vs": 1.73,
+      "rho_min": 1.8,
+      "rho_max": 2.9,
+      "h_min": 0.04,
+      "h_max": 0.25,
+      "allow_lvz": true,
+      "lvz_prob": 0.5
+    },
+    "families": [
+      {
+        "id": "solid24",
+        "B": 2048,
+        "L": 24,
+        "seed": 20261112
+      },
+      {
+        "id": "solid70",
+        "B": 64,
+        "L": 70,
+        "seed": 20261113
+      },
+      {
+        "id": "wet24",
+        "derived_from": "solid24[:64]",
+        "replace_first_layer": {
+          "thickness": 0.08,
+          "vp": 1.5,
+          "vs": 0,
+          "rho": 1.02
+        },
+        "B": 64,
+        "L": 24
+      }
+    ],
+    "periods1": {
+      "values_seconds": [
+        3
+      ]
+    },
+    "periods64": {
+      "function": "numpy.geomspace",
+      "start_seconds": 0.15,
+      "stop_seconds": 10,
+      "num": 64
+    },
+    "dtype": "float64",
+    "memory_order": "C",
+    "freeze_files_and_sha256": true,
+    "repeat_models_to_inflate_B": false
+  },
+  "timing": {
+    "import_and_constructor_seconds": "record separately once in each fresh worker",
+    "first_calls": 1,
+    "warmup_calls": 3,
+    "steady_rounds": 12,
+    "order_cycle": [
+      [
+        "C64",
+        "G64",
+        "G32"
+      ],
+      [
+        "G64",
+        "G32",
+        "C64"
+      ],
+      [
+        "G32",
+        "C64",
+        "G64"
+      ],
+      [
+        "C64",
+        "G32",
+        "G64"
+      ],
+      [
+        "G32",
+        "G64",
+        "C64"
+      ],
+      [
+        "G64",
+        "C64",
+        "G32"
+      ]
+    ],
+    "order_cycle_repetitions": 2,
+    "one_path_computes_at_a_time": true,
+    "timer": "time.perf_counter_ns",
+    "boundary": "complete synchronous Solver call with host FP64 inputs and host outputs",
+    "excludes": [
+      "file IO",
+      "output hashing and statistics",
+      "mode reliability check",
+      "profiling"
+    ],
+    "summaries": [
+      "median",
+      "q25",
+      "q75",
+      "min",
+      "max"
+    ],
+    "quantile_method": "linear",
+    "speedup_formula": "ratio of steady time medians; report paired-round ratios separately if used",
+    "contaminated_runs": "retain evidence and rerun full paired group; do not selectively remove slow samples"
+  },
+  "memory": {
+    "method": "separate one-CUDA-worker run, NVML per-PID used-memory sampling",
+    "interval_ms": 10,
+    "includes": "CUDA context and process-resident GPU allocations",
+    "label": "sampled PID VRAM peak (10 ms), lower bound on instantaneous peak",
+    "native_stats": [
+      "device_workspace_bytes",
+      "pinned_host_bytes",
+      "workspace_bytes",
+      "workspace_budget_bytes",
+      "shape_queue_reserved_bytes",
+      "capacity_models",
+      "chunks",
+      "engine_allocations"
+    ],
+    "unavailable_pid_field": "N/A; optional isolated device-wide number must have a different label"
+  },
+  "throughput": {
+    "models_per_s": "B / median_s",
+    "traces_per_s": "B*T / median_s",
+    "valid_roots_per_s": "stable count(status==VALID) / median_s; otherwise report per-call valid throughput median/IQR and count range",
+    "optional_requested_slots_per_s": "B*nmodes*T / median_s"
+  },
+  "numerical_comparison": {
+    "paired": [
+      {
+        "candidate": "G64",
+        "reference": "C64",
+        "accuracy": "same"
+      },
+      {
+        "candidate": "G32",
+        "reference": "G64",
+        "accuracy": "same"
+      }
+    ],
+    "regression_reference": {
+      "path": "C64",
+      "accuracy": "high",
+      "nmodes": 7,
+      "scope": "all unique timing inputs",
+      "is_independent_physical_truth": false
+    },
+    "qualification": {
+      "strict_prefix": "zero strict wrong, missing/extra, newly numerical failures on judged domain; repeatability and diagnostic differences accounted for; unjudged excluded",
+      "balanced_isolated_root_budget": "no isolated-root budget violations or missing/spurious isolated roots or newly numerical failures; cluster differences flagged and ordinal issues retained; approximate qualification only"
+    },
+    "strict_wrong": {
+      "absolute_floor_km_s": 0.000003,
+      "relative": 0.000002,
+      "combination": "max"
+    },
+    "isolated_root_budget": {
+      "high": {
+        "absolute_floor_km_s": 0.000003,
+        "relative": 0.000002
+      },
+      "balanced": {
+        "absolute_floor_km_s": 0.000003,
+        "relative": 0.00002
+      },
+      "combination": "max"
+    },
+    "error_quantiles": [
+      0.5,
+      0.95,
+      0.99,
+      1
+    ],
+    "retain": [
+      "finite coverage",
+      "ordinal wrong/missing",
+      "one-to-one set missing/extra",
+      "rank shifts",
+      "close-cluster unmatched",
+      "unjudged reference traces/prefix tails"
+    ],
+    "diagnostic_denominators": {
+      "cell": "B*nmodes*T",
+      "trace": "B*T"
+    },
+    "root_count_note": "capped at nmodes+2, -1 unresolved; normalize cap before comparing different nmodes",
+    "scientific_repeats": "do not count timing repeats or reused model prefixes as independent validation",
+    "fp64_repair_note": "attempted high FP32 repairs, bounded per native chunk; count separately from numerical failure"
+  },
+  "supplemental_checks": [
+    {
+      "id": "S03-R-G32-chunk8",
+      "timed": false,
+      "chunk_size": 8,
+      "compare_to": "S03-R-G32",
+      "purpose": "expose chunk-dependent bounded FP64 repair effects"
+    },
+    {
+      "id": "independent-Rayleigh",
+      "timed": false,
+      "paths": [
+        "C64",
+        "G64",
+        "G32"
+      ],
+      "accuracies": [
+        "high",
+        "balanced"
+      ],
+      "files": [
+        "tests/data/witness_*.npz (8 files)",
+        "tests/data/B10000_*.npz (3 files)"
+      ],
+      "reference_rule": "same bounds and expected prefixes as tests/test_solver.py"
+    },
+    {
+      "id": "analytic-Love-and-physical-invariants",
+      "timed": false,
+      "paths": [
+        "C64",
+        "G64",
+        "G32"
+      ],
+      "accuracies": [
+        "high",
+        "balanced"
+      ],
+      "source": "tests/test_physics.py; protocol gives exact scope"
+    }
+  ],
+  "profiling": {
+    "separate_from_main_timing": true,
+    "cases": [
+      "M05-R",
+      "M06-R",
+      "M04-L",
+      "S03-R"
+    ],
+    "paths": [
+      "C64",
+      "G64",
+      "G32"
+    ],
+    "warmup_calls": 1,
+    "measured_calls": 3,
+    "profile": true
+  },
+  "group_count": 10,
+  "workload_wave_count": 19,
+  "timed_case_count": 57,
+  "groups": [
+    {
+      "id": "M01",
+      "B": 1,
+      "L": 24,
+      "T": 1,
+      "K": 5,
+      "accuracy": "balanced",
+      "waves": [
+        "rayleigh",
+        "love"
+      ],
+      "input_family": "solid24"
+    },
+    {
+      "id": "M02",
+      "B": 1,
+      "L": 24,
+      "T": 64,
+      "K": 5,
+      "accuracy": "balanced",
+      "waves": [
+        "rayleigh",
+        "love"
+      ],
+      "input_family": "solid24"
+    },
+    {
+      "id": "M03",
+      "B": 64,
+      "L": 24,
+      "T": 1,
+      "K": 5,
+      "accuracy": "balanced",
+      "waves": [
+        "rayleigh",
+        "love"
+      ],
+      "input_family": "solid24"
+    },
+    {
+      "id": "M04",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "K": 5,
+      "accuracy": "balanced",
+      "waves": [
+        "rayleigh",
+        "love"
+      ],
+      "input_family": "solid24"
+    },
+    {
+      "id": "M05",
+      "B": 2048,
+      "L": 24,
+      "T": 1,
+      "K": 5,
+      "accuracy": "balanced",
+      "waves": [
+        "rayleigh",
+        "love"
+      ],
+      "input_family": "solid24"
+    },
+    {
+      "id": "M06",
+      "B": 2048,
+      "L": 24,
+      "T": 64,
+      "K": 5,
+      "accuracy": "balanced",
+      "waves": [
+        "rayleigh",
+        "love"
+      ],
+      "input_family": "solid24"
+    },
+    {
+      "id": "S01",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "K": 1,
+      "accuracy": "balanced",
+      "waves": [
+        "rayleigh",
+        "love"
+      ],
+      "input_family": "solid24"
+    },
+    {
+      "id": "S02",
+      "B": 64,
+      "L": 70,
+      "T": 64,
+      "K": 5,
+      "accuracy": "balanced",
+      "waves": [
+        "rayleigh",
+        "love"
+      ],
+      "input_family": "solid70"
+    },
+    {
+      "id": "S03",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "K": 5,
+      "accuracy": "high",
+      "waves": [
+        "rayleigh",
+        "love"
+      ],
+      "input_family": "solid24"
+    },
+    {
+      "id": "W01",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "K": 5,
+      "accuracy": "high",
+      "waves": [
+        "rayleigh"
+      ],
+      "input_family": "wet24"
+    }
+  ],
+  "cases": [
+    {
+      "id": "M01-R-C64",
+      "group": "M01",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 1,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M01-R-G64",
+      "group": "M01",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 1,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M01-R-G32",
+      "group": "M01",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 1,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M01-L-C64",
+      "group": "M01",
+      "path": "C64",
+      "wave": "love",
+      "B": 1,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M01-L-G64",
+      "group": "M01",
+      "path": "G64",
+      "wave": "love",
+      "B": 1,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M01-L-G32",
+      "group": "M01",
+      "path": "G32",
+      "wave": "love",
+      "B": 1,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M02-R-C64",
+      "group": "M02",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 1,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M02-R-G64",
+      "group": "M02",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 1,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M02-R-G32",
+      "group": "M02",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 1,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M02-L-C64",
+      "group": "M02",
+      "path": "C64",
+      "wave": "love",
+      "B": 1,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M02-L-G64",
+      "group": "M02",
+      "path": "G64",
+      "wave": "love",
+      "B": 1,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M02-L-G32",
+      "group": "M02",
+      "path": "G32",
+      "wave": "love",
+      "B": 1,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 1
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M03-R-C64",
+      "group": "M03",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M03-R-G64",
+      "group": "M03",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M03-R-G32",
+      "group": "M03",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M03-L-C64",
+      "group": "M03",
+      "path": "C64",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M03-L-G64",
+      "group": "M03",
+      "path": "G64",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M03-L-G32",
+      "group": "M03",
+      "path": "G32",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M04-R-C64",
+      "group": "M04",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M04-R-G64",
+      "group": "M04",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M04-R-G32",
+      "group": "M04",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M04-L-C64",
+      "group": "M04",
+      "path": "C64",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M04-L-G64",
+      "group": "M04",
+      "path": "G64",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M04-L-G32",
+      "group": "M04",
+      "path": "G32",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M05-R-C64",
+      "group": "M05",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 2048,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M05-R-G64",
+      "group": "M05",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 2048,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M05-R-G32",
+      "group": "M05",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 2048,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M05-L-C64",
+      "group": "M05",
+      "path": "C64",
+      "wave": "love",
+      "B": 2048,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M05-L-G64",
+      "group": "M05",
+      "path": "G64",
+      "wave": "love",
+      "B": 2048,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M05-L-G32",
+      "group": "M05",
+      "path": "G32",
+      "wave": "love",
+      "B": 2048,
+      "L": 24,
+      "T": 1,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods1"
+    },
+    {
+      "id": "M06-R-C64",
+      "group": "M06",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 2048,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M06-R-G64",
+      "group": "M06",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 2048,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M06-R-G32",
+      "group": "M06",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 2048,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M06-L-C64",
+      "group": "M06",
+      "path": "C64",
+      "wave": "love",
+      "B": 2048,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M06-L-G64",
+      "group": "M06",
+      "path": "G64",
+      "wave": "love",
+      "B": 2048,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "M06-L-G32",
+      "group": "M06",
+      "path": "G32",
+      "wave": "love",
+      "B": 2048,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 2048
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S01-R-C64",
+      "group": "S01",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 1,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S01-R-G64",
+      "group": "S01",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 1,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S01-R-G32",
+      "group": "S01",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 1,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S01-L-C64",
+      "group": "S01",
+      "path": "C64",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 1,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S01-L-G64",
+      "group": "S01",
+      "path": "G64",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 1,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S01-L-G32",
+      "group": "S01",
+      "path": "G32",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 1,
+      "accuracy": "balanced",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S02-R-C64",
+      "group": "S02",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 70,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid70",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S02-R-G64",
+      "group": "S02",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 70,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid70",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S02-R-G32",
+      "group": "S02",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 70,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid70",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S02-L-C64",
+      "group": "S02",
+      "path": "C64",
+      "wave": "love",
+      "B": 64,
+      "L": 70,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid70",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S02-L-G64",
+      "group": "S02",
+      "path": "G64",
+      "wave": "love",
+      "B": 64,
+      "L": 70,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid70",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S02-L-G32",
+      "group": "S02",
+      "path": "G32",
+      "wave": "love",
+      "B": 64,
+      "L": 70,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "balanced",
+      "input_family": "solid70",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S03-R-C64",
+      "group": "S03",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "high",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S03-R-G64",
+      "group": "S03",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "high",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S03-R-G32",
+      "group": "S03",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "high",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S03-L-C64",
+      "group": "S03",
+      "path": "C64",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "high",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S03-L-G64",
+      "group": "S03",
+      "path": "G64",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "high",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "S03-L-G32",
+      "group": "S03",
+      "path": "G32",
+      "wave": "love",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "high",
+      "input_family": "solid24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "W01-WR-C64",
+      "group": "W01",
+      "path": "C64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "high",
+      "input_family": "wet24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "W01-WR-G64",
+      "group": "W01",
+      "path": "G64",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "high",
+      "input_family": "wet24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    },
+    {
+      "id": "W01-WR-G32",
+      "group": "W01",
+      "path": "G32",
+      "wave": "rayleigh",
+      "B": 64,
+      "L": 24,
+      "T": 64,
+      "nmodes": 5,
+      "accuracy": "high",
+      "input_family": "wet24",
+      "model_indices": {
+        "start": 0,
+        "stop": 64
+      },
+      "periods": "periods64"
+    }
+  ],
+  "result_row_template": {
+    "case_id": null,
+    "path": null,
+    "completed": false,
+    "contaminated": false,
+    "import_s": null,
+    "constructor_s": null,
+    "first_solve_s": null,
+    "steady_seconds": [],
+    "median_s": null,
+    "q25_s": null,
+    "q75_s": null,
+    "min_s": null,
+    "max_s": null,
+    "models_per_s": null,
+    "traces_per_s": null,
+    "valid_roots_per_s": null,
+    "sampled_pid_peak_vram_bytes": null,
+    "nvml_requested_interval_ms": 10,
+    "nvml_observed_intervals_ms": [],
+    "native_stats": {},
+    "kernel_report": {},
+    "valid_cells": null,
+    "not_found_cells": null,
+    "unresolved_cells": null,
+    "rejected_cells": null,
+    "numerical_failure_cells": null,
+    "total_cells": null,
+    "numerical_failure_traces": null,
+    "total_traces": null,
+    "attempted_calls": null,
+    "exception_calls": null,
+    "oom_calls": null,
+    "timeout_calls": null,
+    "comparison_reference_id": null,
+    "comparison_reference_kind": null,
+    "judged_reference_roots": null,
+    "finite_common_cells": null,
+    "missing": null,
+    "extra": null,
+    "ordinal_wrong": null,
+    "rank_shifts": null,
+    "cluster_unmatched": null,
+    "unjudged": null,
+    "abs_error_km_s": {
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+    },
+    "rel_error": {
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+    },
+    "status_mismatch_cells": null,
+    "mask_mismatch_cells": null,
+    "root_count_mismatch_traces": null,
+    "search_level_mismatch_traces": null,
+    "trace_flags_mismatch_traces": null,
+    "numerical_flags_mismatch_traces": null,
+    "per_bit_xor_counts": {},
+    "fp64_repair_traces": null,
+    "adaptive_fallback_traces": null,
+    "love_phase_fallback_traces": null,
+    "repeated_output_differences": {},
+    "quality_qualified": null,
+    "notes": []
+  }
+}

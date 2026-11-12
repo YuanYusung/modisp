@@ -64,7 +64,8 @@ archives and third-party executables are not bundled.
 
 ## Retained tools
 
-Python tool files were reduced from 19 to 10:
+The earlier consolidation reduced Python tool files from 19 to 10. The 0.4.0
+same-input backend benchmark adds three tools, bringing the current count to 13:
 
 | Tool | Purpose |
 |---|---|
@@ -73,6 +74,9 @@ Python tool files were reduced from 19 to 10:
 | `benchmark_modephys.py` | Large NPY inputs, streaming checkpoints and comparisons |
 | `benchmark_ab.py` | Persistent paired before/after installations |
 | `benchmark_external.py` | Accuracy/performance against frozen solid-Rayleigh references |
+| `benchmark_backends.py` | Frozen inputs, persistent three-path timing, PID memory sampling, independent checks and profiles |
+| `backend_metrics.py` | Ordinal and one-to-one numerical accounting, including unknown reference tails |
+| `report_backends.py` | Public JSON receipts, discrepancy snapshots, Markdown tables and cross-platform checks |
 | `external_reference.py` | Build/verify pinned external reference adapters |
 | `tolerant_metrics.py` | Shared close-cluster and unjudged-row comparison logic |
 | `make_accuracy_fixtures.py` | Recreate fixtures using the explicitly required 0.2.1 baseline |
@@ -89,6 +93,16 @@ stress runners, the one-off sampling scan/adjudication scripts and the separate
 installed smoke script. Their reports remain historical records; the original
 scripts are recoverable at commit `e6bd811` for exact historical reproduction.
 Current work should use the commands above.
+
+The [0.4.0 backend report](BACKEND_BENCHMARK_0_4_0.md#reproduction) gives the
+matrix and commands. Its monitoring/analytic checks additionally need
+`nvidia-ml-py` and SciPy; NumPy is the only dependency of the metric and report
+helpers. Main timing, sampled-memory runs and `profile=True` calls are separate.
+Completed timing groups are checkpointed; resume rejects a changed input/tool,
+GPU, affinity or thread configuration. Observed contention is retained in the
+receipt and disqualifies uncontended speed claims; no competing process is
+stopped. Run the numerical accounting tests with
+`python -m pytest tests/test_backend_metrics.py -q`.
 
 ## Executed checks for the consolidated tree
 

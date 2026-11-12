@@ -46,6 +46,39 @@ gain on batches with many models and few periods. Install both packages
 at version 0.4.0 with private ABI 8. See [release changes](CHANGELOG.md)
 and [performance and numerical limits](docs/PERFORMANCE.md).
 
+<!-- backend-benchmark-0.4.0:start -->
+## Same-input backend comparison (0.4.0)
+
+Measured on **2026-11-12** with matching released 0.4.0 / ABI 8 wheels: 57 configurations per host, covering Rayleigh/Love, B=1/64/2048, T=1/64, K=1/5, L=24/70, balanced/high and surface water. The same frozen inputs were copied between hosts. CPU uses Dunkin/FP64; CUDA uses fast/FP64 or FP32.
+
+Selected rows below request five modes. Times are **complete-call steady medians in ms**, after one separate first call and three warmups, from 12 interleaved calls per path. All rows use shape_adaptive, Brent, Love phase, automatic bounds and a 1 GiB workspace budget. The full report includes IQRs, all raw samples, throughput, sampled PID VRAM peaks and numerical accounting.
+
+**† marks rows with a GPU activity flag. A800 is a shared-load diagnostic run:** foreign GPU activity was observed in every workload group, with heavy host CPU load. Its ratios are not uncontended speed rankings. RTX 5050 uses an 8-physical-core-thread CPU baseline, versus 32 on A800. Its initially flagged M06-L group was repeated in full; the receipt retains both attempts and records whether the retry was accepted.
+
+| Host | Case; B × L × T | Preset | CPU FP64 ms | CUDA FP64 ms | CUDA FP32 ms | FP64 / FP32 time ratio |
+|---|---|---|---:|---:|---:|---:|
+| A800† | M01-R; 1 × 24 × 1 | balanced | 3.380 | 5.078 | 4.980 | 1.02 |
+| A800† | M05-R; 2048 × 24 × 1 | balanced | 195.779 | 22.847 | 32.559 | 0.70 |
+| A800† | M06-R; 2048 × 24 × 64 | balanced | 9871.471 | 890.594 | 1072.039 | 0.83 |
+| A800† | M06-L; 2048 × 24 × 64 | balanced | 3155.564 | 609.703 | 254.362 | 2.40 |
+| A800† | S03-R; 64 × 24 × 64 | high | 846.227 | 119.961 | 253.291 | 0.47 |
+| A800† | W01-WR; 64 × 24 × 64 | high | 729.544 | 122.323 | 663.301 | 0.18 |
+| RTX 5050 | M01-R; 1 × 24 × 1 | balanced | 0.956 | 8.562 | 2.874 | 2.98 |
+| RTX 5050 | M05-R; 2048 × 24 × 1 | balanced | 208.727 | 217.078 | 55.219 | 3.93 |
+| RTX 5050 | M06-R; 2048 × 24 × 64 | balanced | 12150.122 | 12920.877 | 2177.995 | 5.93 |
+| RTX 5050† | M06-L; 2048 × 24 × 64 | balanced | 4523.843 | 11023.783 | 332.092 | 33.20 |
+| RTX 5050 | S03-R; 64 × 24 × 64 | high | 784.228 | 1132.834 | 549.751 | 2.06 |
+| RTX 5050 | W01-WR; 64 × 24 × 64 | high | 786.350 | 1137.137 | 731.018 | 1.56 |
+
+R=dry Rayleigh, L=Love, WR=wet Rayleigh. Ratios are raw wall-time ratios; they do not imply equivalent root completeness. Single-model latency can favor CPU, and FP32 does not win on every workload.
+
+**Read speed with root and failure accounting.** On both platforms, M06-R G32 differed from same-preset G64 in 104 strict ordinal cells and 16 capped-count traces; M06-L had 13 strict ordinal differences and one capped-count difference. Balanced FP64 itself has close-cluster omissions/rank shifts against high. Neither large-batch G32 row passes the isolated-root-budget gate against the CPU-high regression witness. The full tables retain the large ordinal errors rather than hiding them behind small common-root percentiles.
+
+Wet-high G32 retained explicit UNRESOLVED results (a800: 5 traces / 25 cells; rtx5050: 6 traces / 30 cells). In S03-R dry/high, G32 passed the judged-prefix check on both hosts, with 20 attempted FP64 repairs each. The 11 difficult independent Rayleigh fixtures recovered all 49 requested reference roots in high on all three paths on both hosts; this does not extend that validation to every benchmark input.
+
+See the [full 0.4.0 report](docs/BACKEND_BENCHMARK_0_4_0.md) for all 114 rows, per-bit diagnostics, one-to-one matching, explicit unjudged domains, cross-platform comparisons and discrepancy snapshots. The [frozen matrix](docs/benchmarks/backend-0.4.0-matrix.json) and [driver](tools/benchmark_backends.py) reproduce the experiment. These are backend/precision comparisons within 0.4.0, not version-to-version speedups.
+<!-- backend-benchmark-0.4.0:end -->
+
 ## Refinement, Love phase search and mode diagnostics
 
 Adaptive CPU/CUDA solvers default to `refinement="brent"`; choose

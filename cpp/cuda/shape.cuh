@@ -105,6 +105,56 @@ __device__ bool shape_float_leaf(Device st,const md::FloatMedium &med,double ome
   return shape_collect<true>(st,t,K,x,f,n,last,nr);
 }
 
+// Reuse the rounded layer constants in the regular Rayleigh recurrence.
+// Retain the factored low-velocity evaluator wherever it is needed.
+__device__ __noinline__ md::ShapeSample shape_prepared_float(
+    const md::FloatMedium &med,double omega,double c) {
+  const float velocity=static_cast<float>(c);
+  if(med.wave||med.secular!=1||!med.fka||velocity<med.rayleigh_stable_below)
+    return md::shape_evaluate(med,omega,c);
+  const float w=static_cast<float>(omega);
+  float g;
+  const float f=md::dunkin_secular_fast<float,true>(
+      med.fh,med.fvp,med.fvs,med.frho,med.L,w/velocity,w,med.fvs[0]==0.f,false,
+      med.fka,med.fka+med.L,med.fka+2*med.L,med.firho,med.firho2,&g);
+  return {f,g};
+}
+
+template<bool STREAMED>
+__device__ __forceinline__ md::ShapeSample shape_float_sample(
+    const md::FloatMedium &med,double omega,double c,unsigned long long &evals){
+  if constexpr (!STREAMED){
+    ++evals;
+    return shape_prepared_float(med,omega,c);
+  }
+  // Streamed retries can reach adjacent positions with the same FP32 coordinate.
+  const unsigned active=__activemask();
+  const int leader=__ffs(__match_any_sync(active,__float_as_uint(static_cast<float>(c))))-1;
+  float f=0.f,g=0.f;
+  if((threadIdx.x&31)==leader){
+    const auto sample=md::shape_evaluate(med,omega,c);
+    f=static_cast<float>(sample.f);g=static_cast<float>(sample.g);++evals;
+  }
+  return {__shfl_sync(active,f,leader),__shfl_sync(active,g,leader)};
+}
+
+// Classify independent intervals in parallel. Only the trace leader mutates
+// the bracket list and the work budget; both retain the original order.
+enum ShapeDecision { finite_samples=1, consistent_samples=2, signed_bracket=4, no_trough=8 };
+__device__ int shape_classify(const md::ShapeSample (&s)[5],double eta,bool variation,double roundoff){
+  if(!md::shape_finite(s[0])||!md::shape_finite(s[1])||!md::shape_finite(s[2])||
+     !md::shape_finite(s[3])||!md::shape_finite(s[4]))return 0;
+  int result=finite_samples;
+  if(md::shape_consistent(s,eta,variation,roundoff))result|=consistent_samples;
+  bool bracket=false,trough=false;
+  for(int k=0;k<4;++k)bracket|=(s[k].f<0.)!=(s[k+1].f<0.)||s[k].f==0.;
+  for(int k=1;k<4;++k){
+    const double sign=s[k].f<0.?-1.:1.;
+    trough|=sign*s[k].g<sign*s[k-1].g&&sign*s[k].g<sign*s[k+1].g;
+  }
+  return result|(bracket?signed_bracket:0)|(trough?0:no_trough);
+}
+
 template<bool FP32,bool REPAIR,bool STREAMED>
 __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,double accept,int t,double *sm){
   constexpr int stack_size=STREAMED?float_shape_stack:md::shape_queue;
@@ -114,16 +164,18 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
   auto *nodes=reinterpret_cast<Node*>(sm),*next=nodes+stack_size;
   auto *probe=reinterpret_cast<Sample*>(next+next_size);
   double *h=sm+md::shape_storage_doubles,*a=h+L,*b=a+L,*r=b+L,*ia=r+L,*ib=ia+L,*ka=ib+L,*kb=ka+L,*gammk=kb+L;
+  constexpr bool parallel_classification=!STREAMED;
+  __shared__ int decisions[parallel_classification?md::shape_queue:1];
   __shared__ double coords[17];__shared__ Sample initial[33];
   __shared__ int bad,nr,work,nseg,nq,nnext,pending,bulk_limit,seed_index,finished,density_ready;
   __shared__ double density_next,previous,covered,density_point;
-  __shared__ unsigned long long accepted_nodes,subdivided_nodes,reused_nodes;
+  __shared__ unsigned long long accepted_nodes,subdivided_nodes,reused_nodes,relaxed_nodes;
   const int model=t/nf;const size_t off=static_cast<size_t>(model)*L,tab=static_cast<size_t>(model)*TABLE;
-  const double period=st.period[t%nf],omega=md::two_pi<double>()/period;
+  const double period=st.trace_period(t,nf),omega=md::two_pi<double>()/period;
   const double lower=st.bounds[2*model],upper=st.bounds[2*model+1];
   const bool exact=(!FP32||STREAMED)&&st.accuracy==0;
   const double epsilon=exact?.015625:.25;
-  const double min_relative=exact?0.:st.close_root_rtol*(st.accuracy==1?.5:1.);
+  const double min_relative=exact?0.:st.close_root_rtol*((st.accuracy==1||st.accuracy==4)?.5:1.);
   const double nlo=st.tn[tab]/period,nhi=st.tn[tab+st.nt[model]-1]/period;
   const double start=floor(nlo/epsilon)+1.,stop=nhi;
   for(int j=threadIdx.x;j<L;j+=blockDim.x){
@@ -131,7 +183,7 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
     prepare_trace_layer<FP32>(j,L,omega,a[j],b[j],ka,kb,gammk);
   }
   if(!threadIdx.x){
-    bad=0;nr=0;work=0;seed_index=0;finished=0;density_ready=0;density_point=CUDART_INF;accepted_nodes=subdivided_nodes=reused_nodes=0;previous=lower;density_next=start*epsilon;
+    bad=0;nr=0;work=0;seed_index=0;finished=0;density_ready=0;density_point=CUDART_INF;accepted_nodes=subdivided_nodes=reused_nodes=relaxed_nodes=0;previous=lower;density_next=start*epsilon;
     covered=upper;
     if(!isfinite(nhi)){bad=1;atomicAdd(&st.stats[SHAPE_WORK_LIMIT],1ULL);}
     atomicAdd(&st.stats[SEARCHES],1ULL);if(!exact)st.flags[t]|=2048u;
@@ -181,17 +233,39 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
       }
     }
     __syncthreads();if(bad)break;
-    for(int j=threadIdx.x;j<2*nseg+1;j+=blockDim.x){
+    // Consecutive tiles share their endpoint. In a full tile this
+    // leaves exactly 32 new samples for the default one-warp block. Keep
+    // the original work budget above so fallback decisions stay identical.
+    const int first_sample=(!REPAIR&&coords[0]!=lower)?1:0;
+    for(int j=first_sample+threadIdx.x;j<2*nseg+1;j+=blockDim.x){
       const double c=j%2?coords[j/2]+.5*(coords[j/2+1]-coords[j/2]):coords[j/2];
-      initial[j]=md::shape_evaluate(med,omega,c);++evals;
+      if constexpr (FP32)initial[j]=shape_float_sample<STREAMED>(med,omega,c,evals);
+      else{initial[j]=md::shape_evaluate(med,omega,c);++evals;}
     }
     __syncthreads();
     for(int j=threadIdx.x;j<nq;j+=blockDim.x)
       nodes[STREAMED?pending-1-j:j]={coords[j],coords[j+1],initial[2*j],initial[2*j+1],initial[2*j+2],0};
     __syncthreads();
     while(nq&&!bad){
-      for(int j=threadIdx.x;j<2*nq;j+=blockDim.x){const auto node=nodes[STREAMED?pending-1-j/2:j/2];const double c=node.a+(j%2?.75:.25)*(node.b-node.a);probe[j]=md::shape_evaluate(med,omega,c);++evals;}
+      for(int j=threadIdx.x;j<2*nq;j+=blockDim.x){
+        const auto node=nodes[STREAMED?pending-1-j/2:j/2];
+        const double c=node.a+(j%2?.75:.25)*(node.b-node.a);
+        if constexpr (FP32){
+          // Subdivision midpoint arithmetic can differ from the generating
+          // quarter point in FP64. The root intervals retain their original
+          // endpoints, so only reuse within a warp of new exact float keys.
+          probe[j]=shape_float_sample<STREAMED>(med,omega,c,evals);
+        }else{probe[j]=md::shape_evaluate(med,omega,c);++evals;}
+      }
       __syncthreads();
+      if constexpr (parallel_classification) {
+        for(int j=threadIdx.x;j<nq;j+=blockDim.x){
+          const auto node=nodes[j];
+          md::ShapeSample s[5]={node.s0,probe[2*j],node.sm,probe[2*j+1],node.s1};
+          decisions[j]=shape_classify(s,st.sampling_rtol,!exact,FP32?8.*FLT_EPSILON:64.*DBL_EPSILON);
+        }
+        __syncthreads();
+      }
       if(!threadIdx.x){
         nnext=0;work+=2*nq;
         if(work>md::shape_work){bad=1;atomicAdd(&st.stats[SHAPE_WORK_LIMIT],1ULL);}
@@ -200,10 +274,20 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
           if(nr==K&&node.a>st.hi[static_cast<size_t>(t)*K+K-1])continue;
           md::ShapeSample s[5]={node.s0,probe[2*j],node.sm,probe[2*j+1],node.s1};
           reused_nodes+=3;
-          for(int k=0;k<5;++k)if(!md::shape_finite(s[k]))bad=1;
-          if(bad)break;
-          bool good=md::shape_consistent(s,st.sampling_rtol,!exact,FP32?8.*FLT_EPSILON:64.*DBL_EPSILON),bracket=false;
-          for(int k=0;k<4;++k)if((s[k].f<0.)!=(s[k+1].f<0.)||s[k].f==0.)bracket=true;
+          bool good=false,bracket=false;
+          if constexpr (parallel_classification) {
+            const int decision=decisions[j];
+            if(!(decision&finite_samples)){bad=1;break;}
+            good=decision&consistent_samples;bracket=decision&signed_bracket;
+            if(good&&!bracket&&(decision&no_trough)&&s[4].f!=0.){
+              ++accepted_nodes;continue;
+            }
+          } else {
+            for(int k=0;k<5;++k)if(!md::shape_finite(s[k]))bad=1;
+            if(bad)break;
+            good=md::shape_consistent(s,st.sampling_rtol,!exact,FP32?8.*FLT_EPSILON:64.*DBL_EPSILON);
+            for(int k=0;k<4;++k)if((s[k].f<0.)!=(s[k+1].f<0.)||s[k].f==0.)bracket=true;
+          }
           if constexpr (FP32) {
             if(!good&&exact&&width<=md::coordinate_floor(med)*node.b){
               if(!shape_float_leaf(st,med,omega,t,K,node.a,node.b,node.b==upper,nr,evals,work)){
@@ -227,10 +311,16 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
           }
           if(!good&&exact&&bracket&&width<=.125*tol*node.b)good=true;
           if(!good&&min_relative>0.&&width<=min_relative*node.b){good=true;st.flags[t]|=4096u;}
+          if(!good&&st.auto_sampling&&md::shape_auto_relaxed(s,node.b,b[L-1])&&
+             md::shape_consistent(s,.05,true,FP32?8.*FLT_EPSILON:64.*DBL_EPSILON)){
+            good=true;++relaxed_nodes;
+          }
           if(!good){
             if(node.depth>=md::shape_depth||node.a+.25*width<=node.a){bad=1;atomicAdd(&st.stats[SHAPE_DEPTH_LIMIT],1ULL);break;}
             if(nnext+2>next_size){
-              if constexpr (FP32&&!STREAMED)st.status[t]=shape_frontier_full;
+              if constexpr (FP32&&!STREAMED){
+                st.status[t]=shape_frontier_full;atomicAdd(&st.stats[SHAPE_FRONTIER_OVERFLOWS],1ULL);
+              }
               bad=1;atomicAdd(&st.stats[SHAPE_WORK_LIMIT],1ULL);break;
             }
             const double mid=node.a+.5*width;
@@ -239,8 +329,6 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
           }
           ++accepted_nodes;
           double x[11],f[11];int n=5;
-          for(int k=0;k<5;++k){x[k]=node.a+k*.25*width;f[k]=s[k].f;}
-          if constexpr (STREAMED)x[4]=node.b;
           for(int k=1;k<4;++k){
             if((s[k-1].f<0.)!=(s[k].f<0.)||(s[k].f<0.)!=(s[k+1].f<0.))continue;
             const double sign=s[k].f<0.?-1.:1.,u=sign*s[k-1].g,v=sign*s[k].g,z=sign*s[k+1].g;
@@ -254,6 +342,11 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
           }
           if(bad)break;
           if(node.b==upper&&md::ambiguous_sh_cutoff(med,node.b,s[4].f)){bad=1;break;}
+          // The five finite samples already ruled out a root unless the last
+          // endpoint is zero or an extremum supplied another sample.
+          if(n==5&&!bracket&&s[4].f!=0.)continue;
+          for(int k=0;k<5;++k){x[k]=node.a+k*.25*width;f[k]=s[k].f;}
+          if constexpr (STREAMED)x[4]=node.b;
           if(!shape_collect<STREAMED>(st,t,K,x,f,n,node.b==upper,nr)){
             if constexpr (FP32)st.status[t]=shape_sign_uncertain;
             bad=1;break;
@@ -274,7 +367,10 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
       }
       __syncthreads();
     }
-    if(!threadIdx.x)finished=nr>=K||previous>=upper;
+    if(!threadIdx.x){
+      finished=nr>=K||previous>=upper;
+      if constexpr (!REPAIR)initial[0]=initial[2*nseg];
+    }
     __syncthreads();
   }
   const size_t p=static_cast<size_t>(t)*K;
@@ -291,7 +387,8 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
       }
       if(!root_after<FP32||REPAIR>(root,previous)){bad=1;break;}
     }
-    if(!bad){st.level[t]=8+st.accuracy;st.count[t]=nr;st.active[t]=0;if(md::has_close_roots(st.roots+p,nr,st.close_root_rtol))st.flags[t]|=4096u;}
+    if(!bad&&relaxed_nodes)st.flags[t]|=1u<<17;
+    if(!bad){st.level[t]=st.accuracy==4?9:8+st.accuracy;st.count[t]=nr;st.active[t]=0;if(md::has_close_roots(st.roots+p,nr,st.close_root_rtol))st.flags[t]|=4096u;}
   }
   __syncthreads();
   if(!bad)for(int j=threadIdx.x;j<modes;j+=blockDim.x){
@@ -300,8 +397,13 @@ __device__ void shape_one(Device st,int L,int nf,int K,int modes,double tol,doub
     if(isfinite(root)&&accept<1.){const double f=md::evaluate(med,omega,root);++evals;if(!isfinite(f)||fabs(f)>accept){root=CUDART_NAN;atomicOr(&st.flags[t],F_REJECTED);atomicAdd(&st.stats[ACCEPT_REJECTED],1ULL);}}
     st.output[(static_cast<size_t>(model)*modes+j)*nf+t%nf]=root;
   }
-  __syncthreads();add_sampling_stat(&st.stats[EVALS],evals);
-  if(!threadIdx.x){if(!bad){atomicAdd(&st.stats[BRACKETS],static_cast<unsigned long long>(nr));if(!exact)atomicAdd(&st.stats[VERIFICATION_SKIPPED],1ULL);}if(accepted_nodes)atomicAdd(&st.stats[SHAPE_ACCEPTED],accepted_nodes);if(subdivided_nodes)atomicAdd(&st.stats[SHAPE_SUBDIVISIONS],subdivided_nodes);if(reused_nodes)atomicAdd(&st.stats[SHAPE_REUSED],reused_nodes);}
+  __syncthreads();
+  if constexpr (FP32&&!STREAMED){
+    if(bad&&st.status[t]==shape_frontier_full)
+      add_sampling_stat(&st.stats[SHAPE_FRONTIER_DISCARDED_EVALS],evals);
+  }
+  add_sampling_stat(&st.stats[EVALS],evals);
+  if(!threadIdx.x){if(relaxed_nodes)atomicAdd(&st.stats[AUTO_RELAXED_LEAVES],relaxed_nodes);if(!bad){atomicAdd(&st.stats[BRACKETS],static_cast<unsigned long long>(nr));if(!exact)atomicAdd(&st.stats[VERIFICATION_SKIPPED],1ULL);}if(accepted_nodes)atomicAdd(&st.stats[SHAPE_ACCEPTED],accepted_nodes);if(subdivided_nodes)atomicAdd(&st.stats[SHAPE_SUBDIVISIONS],subdivided_nodes);if(reused_nodes)atomicAdd(&st.stats[SHAPE_REUSED],reused_nodes);}
 }
 
 template<bool FP32,bool REPAIR=false,bool STREAMED=FP32>
@@ -314,6 +416,9 @@ __global__ void shape_search(Device st,int L,int nf,int K,int modes,double tol,d
   for(;;){if(!threadIdx.x)index=atomicAdd(st.cursor,1);__syncthreads();if(index>=*st.queue_n)return;
     const int t=st.queue[index];
     if(st.active[t]){
+      if constexpr (FP32&&STREAMED){
+        if(!threadIdx.x&&st.accuracy!=0)atomicAdd(&st.stats[SHAPE_FRONTIER_RETRIES],1ULL);
+      }
       if constexpr (REPAIR){
         if(!threadIdx.x){st.flags[t]|=FP64_REPAIR;atomicAdd(&st.stats[FP64_REPAIRS],1ULL);}
       }

@@ -7,7 +7,7 @@ execute_process(COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
   OUTPUT_VARIABLE pybind11_DIR OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
 find_package(pybind11 CONFIG REQUIRED)
 find_package(Threads REQUIRED)
-pybind11_add_module(_cpu NO_EXTRAS cpp/cpu/solver.cpp cpp/cpu/dunkin_ref.cpp)
+pybind11_add_module(_cpu NO_EXTRAS cpp/cpu/solver.cpp cpp/cpu/dunkin_ref.cpp cpp/cpu/review_groups.cpp)
 target_include_directories(_cpu PRIVATE cpp)
 target_link_libraries(_cpu PRIVATE Threads::Threads)
 if(MSVC)

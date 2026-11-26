@@ -31,7 +31,7 @@ else()
   set(MD_CPP "${CMAKE_CURRENT_SOURCE_DIR}/cpp")
 endif()
 pybind11_add_module(_cuda ${MD_CPP}/cuda/bindings.cpp ${MD_CPP}/cuda/qe.cu
-  ${MD_CPP}/cuda/coarse_scan.cu ${MD_CPP}/cuda/refine.cu)
+  ${MD_CPP}/cuda/coarse_scan.cu ${MD_CPP}/cuda/refine.cu ${MD_CPP}/cuda/review_groups.cu)
 target_include_directories(_cuda PRIVATE ${MD_CPP})
 target_link_libraries(_cuda PRIVATE CUDA::cudart_static)
 foreach(feature DENSITY_TABLE VALUE_CACHE MERGE ACTIVITY_QUEUE PREFIX_DENSE WARP_STATS TRACE_CONSTANTS)

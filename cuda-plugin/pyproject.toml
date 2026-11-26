@@ -4,14 +4,14 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "modisp-cuda12"
-version = "0.4.0"
-description = "Optional CUDA 12 backend for modisp with FP64 and FP32 solvers"
+version = "0.5.0"
+description = "Optional CUDA 12 backend with group velocity and frequency continuation"
 requires-python = ">=3.10"
 license = "BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-Toolkit"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*"]
 readme = "README.md"
 authors = [{name = "Yuan Yusong"}]
-dependencies = ["modisp==0.4.0"]
+dependencies = ["modisp==0.5.0"]
 
 [tool.scikit-build]
 wheel.packages = ["python/modisp_cuda"]

@@ -330,6 +330,23 @@ MD_HD void dunkin_apply_evanescent(T k,T k2,T h,T rho,T irho,T irho2,
   dunkin_contract(k2,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,e,ee);
 }
 
+// Starting at +0 makes a greater-than comparison equivalent to fmax on
+// magnitudes, including NaNs. Avoid a libm call for every CPU component.
+template <typename T>
+MD_HD T dunkin_max_amplitude(const T e[5]) {
+  T scale=T(0);
+#pragma unroll
+  for (int i=0; i<5; ++i) {
+    const T magnitude=MD_FABS(e[i]);
+#ifdef __CUDA_ARCH__
+    scale=MD_FMAX(scale,magnitude);
+#else
+    if (magnitude>scale) scale=magnitude;
+#endif
+  }
+  return scale;
+}
+
 // ---------------------------------------------------------------------------
 // Rayleigh secular function for a solid layered model.
 //
@@ -397,9 +414,7 @@ MD_HD T dunkin_secular(const T *d, const T *a, const T *b, const T *rho,
     }
 
     if (NORMALIZE) {
-      T t1 = T(0);
-#pragma unroll
-      for (int i = 0; i < 5; ++i) t1 = MD_FMAX(t1, MD_FABS(ee[i]));
+      T t1 = dunkin_max_amplitude(ee);
       if (t1 < T(1.0e-40)) t1 = T(1);
 #pragma unroll
       for (int i = 0; i < 5; ++i) ee[i] /= t1;
@@ -505,9 +520,7 @@ MD_HD T dunkin_secular_fast(const T *d, const T *a, const T *b, const T *rho,
       dunkin_apply_fast<T>(wvno2, gam, gammk, rhol, v, irho, irho2, e, ee);
     }
 
-    T t1 = T(0);
-#pragma unroll
-    for (int i = 0; i < 5; ++i) t1 = MD_FMAX(t1, MD_FABS(ee[i]));
+    T t1 = dunkin_max_amplitude(ee);
     if (t1 < (sizeof(T)==sizeof(float) ? T(1.0e-30) : T(1.0e-40))) t1 = T(1);
     // One reciprocal replaces five divisions. This keeps the same scale as
     // the released path, so f_accept and the shape feature retain their

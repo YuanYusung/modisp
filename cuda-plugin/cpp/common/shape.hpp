@@ -40,6 +40,22 @@ MD_HD bool shape_consistent(const ShapeSample *s,double eta,bool variation=true,
 
 MD_HD bool shape_finite(const ShapeSample &s){return isfinite(s.f)&&isfinite(s.g);}
 
+// Call only on a finite five-point stencil. Keep the balanced test wherever
+// an extremum, sign bracket, small normalized amplitude or cutoff is sampled.
+MD_HD bool shape_auto_relaxed(const ShapeSample *s,double right,double cutoff){
+  if(right>=.99*cutoff)return false;
+  const bool positive=s[0].f>0.;
+  bool rising=true,falling=true;
+  for(int j=0;j<5;++j){
+    if(s[j].f==0.||(s[j].f>0.)!=positive||fabs(s[j].g)<=.125)return false;
+    if(j){
+      rising=rising&&s[j].g>=s[j-1].g;
+      falling=falling&&s[j].g<=s[j-1].g;
+    }
+  }
+  return rising||falling;
+}
+
 // Locate a suspicious same-sign extremum. Only original-function brackets
 // produced by this proposal can be accepted as roots; amplitude alone cannot.
 template<class M>

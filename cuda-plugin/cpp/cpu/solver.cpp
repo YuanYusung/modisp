@@ -15,15 +15,22 @@
 #include "common/accuracy.hpp"
 #include "common/physics.hpp"
 #include "common/shape.hpp"
+#include "common/group_velocity.hpp"
+#include "cpu/continuation.hpp"
 
 namespace py=pybind11;
+#include "cpu/continuity_screen.hpp"
 using Array=py::array_t<double,py::array::c_style|py::array::forcecast>;
 constexpr int CAP=2048;
 using Point=std::pair<double,double>;
-using Counters=std::array<unsigned long long,29>;
+using Counters=std::array<unsigned long long,CPU_COUNTERS>;
 using Clock=std::chrono::steady_clock;
 double seconds(Clock::time_point t){return std::chrono::duration<double>(Clock::now()-t).count();}
-const char *counter_names[]={"evaluations","extrema_proposals","brackets","adaptive_converged","dense_converged","unconverged","capacity_hits","near_cutoff","nonfinite","refinement_failed","searches","rejected_f","analytical_empty","range_empty","verification_traces","family_conflicts","early_accepts","verification_skipped","dense_coarse_accepted","dense_fine_escalated","trough_risks","shape_accepted","shape_subdivisions","shape_reused","shape_depth_limit","shape_work_limit","legacy_fallbacks","love_phase_accepted","love_phase_fallbacks"};
+const char *counter_names[]={"evaluations","extrema_proposals","brackets","adaptive_converged","dense_converged","unconverged","capacity_hits","near_cutoff","nonfinite","refinement_failed","searches","rejected_f","analytical_empty","range_empty","verification_traces","family_conflicts","early_accepts","verification_skipped","dense_coarse_accepted","dense_fine_escalated","trough_risks","shape_accepted","shape_subdivisions","shape_reused","shape_depth_limit","shape_work_limit","legacy_fallbacks","love_phase_accepted","love_phase_fallbacks",
+  "continuation_anchor_traces","continuation_candidates","continuation_accepted","continuation_fallbacks",
+  "continuation_audit_failed","continuation_evaluations","group_reused","continuation_derivative_roots",
+  "continuation_derivative_evaluations","continuation_prescreen_skipped_roots"};
+static_assert(sizeof(counter_names)/sizeof(*counter_names)==CPU_COUNTERS);
 extern "C" void md_dunkin_grid(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
 extern "C" void md_dunkin_grid_f32(const double*,const double*,const double*,const double*,int,int,const double*,int,double,double,int,double*);
 extern "C" double md_dunkin_point(const double*,const double*,const double*,const double*,int,double,double,int);
@@ -66,6 +73,7 @@ struct Scratch {
   int dense_cells=0;
   unsigned long long dense_cache_hits=0;
   unsigned long long refinement_cache_hits=0;
+  unsigned long long auto_relaxed_leaves=0;
   int refinement_cache_limit=0;
   std::vector<Point> points,extra,cache,merged;
   std::vector<double> roots,previous,coarse,full,guarded,ka,kb,gammk;
@@ -79,13 +87,30 @@ struct Scratch {
   Scratch(){points.reserve(CAP);extra.reserve(CAP);cache.reserve(CAP);merged.reserve(CAP);}
 };
 
+void prepare_trace(const Model &model,double omega,Scratch &w){
+  const int L=model.view.L;
+  for(int j=0;j<L;++j){w.ka[j]=omega/model.view.vp[j];w.kb[j]=model.view.vs[j]==0.?0.:omega/model.view.vs[j];const double z=model.view.vs[j]/omega;w.gammk[j]=2.*z*z;}
+  w.medium=model.view;w.medium.ka=w.ka.data();w.medium.kb=w.kb.data();w.medium.gammk=w.gammk.data();
+}
+
+void group_window(const double *roots,int nr,int j,double lower,double upper,double rtol,
+                  double &lo,double &hi,unsigned &flag){
+  const double c=roots[j];
+  lo=j?.5*(roots[j-1]+c):lower;
+  hi=j+1<nr?.5*(c+roots[j+1]):upper;
+  const bool close=(j&&c-roots[j-1]<=rtol*c)||(j+1<nr&&roots[j+1]-c<=rtol*roots[j+1]);
+  flag=close?md::GROUP_CLOSE_ROOT:0u;
+}
+
 void unique_points(std::vector<Point> &p);
 bool collect_roots(const md::Medium &,double,Scratch &,int,double,bool,bool);
 bool search_shape(const Model &model,double period,double lo,double hi,int K,double tol,double eta,Scratch &w,unsigned &flags){
   const auto &m=w.medium;const double omega=md::two_pi<double>()/period;
   const bool exact=w.policy.accuracy==md::Accuracy::High;
   const double epsilon=exact?.015625:.25;
-  const double floor=exact?0.:w.policy.close_root_rtol*(w.policy.accuracy==md::Accuracy::Balanced?.5:1.);
+  const double floor=exact?0.:w.policy.close_root_rtol*(md::observation_accuracy(w.policy.accuracy)==md::Accuracy::Balanced?.5:1.);
+  const bool auto_sampling=w.policy.accuracy==md::Accuracy::Auto&&eta<0.;
+  if(auto_sampling)eta=.01;
   if(!exact)flags|=2048;
   w.roots.clear();++w.stats[10];
   const double nlo=model.tn.front()/period,nhi=model.tn.back()/period;
@@ -125,6 +150,11 @@ bool search_shape(const Model &model,double period,double lo,double hi,int K,dou
       bool bracket=false;for(int j=0;j<4;++j)if((s[j].f<0.)!=(s[j+1].f<0.)||s[j].f==0.)bracket=true;
       if(!accept&&exact&&bracket&&width<=.125*tol*node.b)accept=true;
       if(!accept&&floor>0.&&width<=floor*node.b){accept=true;flags|=4096;}
+      if(!accept&&auto_sampling&&md::shape_auto_relaxed(s,node.b,m.vs[m.L-1])&&
+         md::shape_consistent(s,.05)){
+        accept=true;
+        ++w.auto_relaxed_leaves;
+      }
       if(!accept){
         if(node.depth>=md::shape_depth||node.a+.25*width<=node.a){++w.stats[24];return false;}
         if(work>md::shape_work){++w.stats[25];return false;}
@@ -133,7 +163,9 @@ bool search_shape(const Model &model,double period,double lo,double hi,int K,dou
         stack[top++]={node.a,mid,s[0],s[1],s[2],node.depth+1};++w.stats[22];continue;
       }
       ++w.stats[21];w.points.clear();
-      for(int j=0;j<5;++j)w.points.emplace_back(node.a+j*.25*width,s[j].f);
+      auto add_samples=[&]{
+        for(int j=0;j<5;++j)w.points.emplace_back(node.a+j*.25*width,s[j].f);
+      };
       // A fitted extremum is only a sampling proposal; acceptance still uses
       // signed original-function brackets and the original root refiner.
       for(int j=1;j<4;++j){
@@ -147,6 +179,7 @@ bool search_shape(const Model &model,double period,double lo,double hi,int K,dou
         if(std::fabs(offset)>=1.||!(predicted<=0.||v<.1*std::fmax(u,z)))continue;
         const double c=node.a+(j+offset)*.25*width;
         const auto probe=sample(c);if(!md::shape_finite(probe)){flags|=32;return false;}
+        if(w.points.empty())add_samples();
         w.points.emplace_back(c,probe.f);++w.stats[1];
         if(probe.f*sign<0.)flags|=4096;
         else{
@@ -154,6 +187,11 @@ bool search_shape(const Model &model,double period,double lo,double hi,int K,dou
           if(w.profile)w.sample_s+=seconds(begin);w.stats[0]+=ev;work+=ev;if(!md::shape_finite(minimum)){flags|=32;return false;}
           w.points.emplace_back(candidate,minimum.f);if(minimum.f*sign<0.)flags|=4096;
         }
+      }
+      if(w.points.empty()){
+        // A sign bracket or an exact zero is required for a root or SH cutoff.
+        if(!bracket&&s[4].f!=0.)continue;
+        add_samples();
       }
       unique_points(w.points);
       if(node.b==hi&&md::ambiguous_sh_cutoff(m,w.points.back().first,w.points.back().second)){flags|=16;return false;}
@@ -337,7 +375,7 @@ bool search_dense(const Model &model,double period,double lo,double hi,int facto
 // is below that scale; every approximate trace remains explicitly marked.
 bool search_observation(const Model &model,double period,double lo,double hi,int K,double tol,Scratch &w,unsigned &flags){
   const auto &m=w.medium;const double omega=md::two_pi<double>()/period;
-  const double target=w.policy.close_root_rtol*(w.policy.accuracy==md::Accuracy::Balanced?.5:1.);
+  const double target=w.policy.close_root_rtol*(md::observation_accuracy(w.policy.accuracy)==md::Accuracy::Balanced?.5:1.);
   const double span=std::log(hi)-std::log(lo),need=std::ceil(span/std::log1p(target));
   flags|=2048;w.roots.clear();++w.stats[10];
   if(!std::isfinite(need)||need>524288.){flags|=8;++w.stats[6];return false;}
@@ -369,26 +407,55 @@ bool search_observation(const Model &model,double period,double lo,double hi,int
 
 class CpuSolver {
   int threads_;Pool pool;std::vector<Scratch> work;
+  CpuContinuation plan;
   std::vector<Model> models;md::AccuracyPolicy policy_;
   bool shape_;double sampling_rtol_;int secular_,refinement_,love_phase_;
  public:
   CpuSolver(int threads,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001,int secular=0,int refinement=1,int love_phase=1):threads_(threads),pool(threads),work(threads),
     policy_(md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol)),shape_(shape),sampling_rtol_(sampling_rtol),secular_(secular),refinement_(refinement),love_phase_(love_phase){if(refinement<0||refinement>2||love_phase<0||love_phase>1)throw py::value_error("invalid refinement or Love strategy");if(threads<1||threads>256)throw py::value_error("threads must be 1..256");if(secular<0||secular>1)throw py::value_error("secular must be 0 (dunkin) or 1 (fast)");}
-  py::tuple run(Array h,Array vp,Array vs,Array rho,Array periods,Array bounds,int modes,int wave,bool automatic,double tol,double accept,bool profile=false){
+  py::tuple run(Array h,Array vp,Array vs,Array rho,Array periods,Array bounds,int modes,int wave,bool automatic,double tol,double accept,bool profile=false,bool compute_group=false,double group_rtol=.001,bool canonical_lower=false,bool continuation=false,int anchor_stride=4){
     if(h.ndim()!=2||h.shape(0)<1||h.shape(1)<1)throw py::value_error("model must be [B,L]");
     int B=h.shape(0),L=h.shape(1),nf=periods.size(),K=modes+2;
     for(auto *a:{&vp,&vs,&rho})if(a->ndim()!=2||a->shape(0)!=B||a->shape(1)!=L)throw py::value_error("model shapes differ");
     if(periods.ndim()!=1||nf<1||bounds.ndim()!=2||bounds.shape(0)!=B||bounds.shape(1)!=2||modes<1||L>256)throw py::value_error("invalid CPU geometry");
+    if(!(group_rtol>0.)||!std::isfinite(group_rtol))throw py::value_error("group_rtol must be finite and positive");
+    bool continuing=continuation&&policy_.accuracy!=md::Accuracy::High&&nf>=8;
+    if(continuation&&anchor_stride<2)throw py::value_error("anchor_stride must be at least 2");
+    if(continuing){
+      const double *p=periods.data();
+      for(int f=0;f<nf;++f)if(!std::isfinite(p[f])||!(p[f]>0.)||(f&&!(p[f]>p[f-1])))
+        throw py::value_error("native continuation periods must be finite, positive, sorted and unique");
+      continuing=plan.prepare(p,nf,anchor_stride,B,K);
+    }
+    py::array_t<unsigned> prediction;
+    unsigned *pred_flags=nullptr;
+    if(continuation){
+      prediction=py::array_t<unsigned>({B,nf});
+      pred_flags=prediction.mutable_data();
+      std::fill_n(pred_flags,static_cast<size_t>(B)*nf,md::P_BYPASSED);
+    }
     py::array_t<double> output({B,modes,nf});py::array_t<unsigned> flags({B,nf});
     py::array_t<int> levels({B,nf}),counts({B,nf});
     double *velocity_data=output.mutable_data();
     unsigned *flags_data=flags.mutable_data();
     int *levels_data=levels.mutable_data(), *counts_data=counts.mutable_data();
+    py::array_t<double> group_output;
+    py::array_t<unsigned> group_flags;
+    double *group_data=nullptr;unsigned *group_flag_data=nullptr;
+    std::vector<double> group_lower,group_upper;
+    if(compute_group){
+      group_output=py::array_t<double>({B,modes,nf});group_flags=py::array_t<unsigned>({B,modes,nf});
+      group_data=group_output.mutable_data();group_flag_data=group_flags.mutable_data();
+      group_lower.resize(static_cast<size_t>(B)*modes*nf);
+      group_upper.resize(static_cast<size_t>(B)*modes*nf);
+    }
+    std::vector<unsigned long long> group_evaluations(threads_,0),group_invalid(threads_,0);
     if(models.size()<static_cast<size_t>(B))models.resize(B);
-    double prepare_s=0.,solve_s=0.;
+    double prepare_s=0.,solve_s=0.,group_s=0.,anchor_s=0.,slope_s=0.,target_s=0.;
     {
       py::gil_scoped_release release;
       for(auto &w:work){w.stats.fill(0);w.profile=profile;w.policy=policy_;w.sample_gap=0.;w.risk=0;w.escalated=false;w.sample_s=w.inverse_s=w.sort_s=w.refine_s=w.adaptive_s=w.dense_s=0.;w.cache_hits=w.cache_misses=w.refinement_cache_hits=w.dense_cache_hits=0;
+        w.auto_relaxed_leaves=0;
         if(policy_.reuse_refinement)w.dense_values.reserve(32769);
         w.refinement_cache_limit=policy_.reuse_refinement?16*K:0;
         w.refined.reserve(w.refinement_cache_limit);
@@ -401,20 +468,22 @@ class CpuSolver {
         q.sh_guide=!wave||md::sh_has_guide(q.view);
         const double lo=bounds.data()[2*i],hi=bounds.data()[2*i+1];
         if(hi<=lo||(hi>lo&&!q.sh_guide))return;
-        q.tx.clear();q.tn.clear();q.tx.reserve(129+2*L);q.tn.reserve(129+2*L);
         for(int j=0;j<L;++j){const double rj=rho.data()[off+j];q.ia[j]=1./(vp.data()[off+j]*vp.data()[off+j]);q.ib[j]=vs.data()[off+j]==0.?0.:1./(vs.data()[off+j]*vs.data()[off+j]);q.irho[j]=1./rj;q.irho2[j]=q.irho[j]*q.irho[j];}
         const int top=q.view.vs[0]==0.?1:0;
         q.seed=wave?q.view.vs[top]:md::rayleigh_reference(q.view.vp[top],q.view.vs[top]);
         q.water_seed=(!wave&&top)?md::scholte_reference(q.view.vp[0],q.view.rho[0],q.view.vp[1],q.view.vs[1],q.view.rho[1]):NAN;
-        for(int j=0;j<129;++j)q.tx.push_back(lo+(hi-lo)*j/128.);
-        for(int j=0;j<L;++j)for(double c:{q.view.vp[j],q.view.vs[j]})if(c>lo&&c<hi)q.tx.push_back(c);
-        std::sort(q.tx.begin(),q.tx.end());q.tx.erase(std::unique(q.tx.begin(),q.tx.end()),q.tx.end());
-        for(double c:q.tx)q.tn.push_back(md::density_base(q.view,c));
+        if(shape_ || continuing || policy_.accuracy==md::Accuracy::High){
+          q.tx.clear();q.tn.clear();q.tx.reserve(129+2*L);q.tn.reserve(129+2*L);
+          for(int j=0;j<129;++j)q.tx.push_back(lo+(hi-lo)*j/128.);
+          for(int j=0;j<L;++j)for(double c:{q.view.vp[j],q.view.vs[j]})if(c>lo&&c<hi)q.tx.push_back(c);
+          std::sort(q.tx.begin(),q.tx.end());q.tx.erase(std::unique(q.tx.begin(),q.tx.end()),q.tx.end());
+          for(double c:q.tx)q.tn.push_back(md::density_base(q.view,c));
+        }
         if(shape_){
           q.sx.clear();q.sx.reserve(6*L+174);q.sx.push_back(lo);q.sx.push_back(hi);
           auto seed=[&](double c){if(c>lo&&c<hi&&std::isfinite(c))q.sx.push_back(c);};
-          const double automatic=md::automatic_lower(q.view);
-          const double anchor=automatic>0.&&std::isfinite(automatic)?std::fmin(lo,automatic):lo;
+          const double model_lower=automatic&&canonical_lower?lo:md::automatic_lower(q.view);
+          const double anchor=model_lower>0.&&std::isfinite(model_lower)?std::fmin(lo,model_lower):lo;
           const double anchor_hi=std::nextafter(q.view.vs[L-1],0.);
           if(hi>lo){
             const double log_anchor=std::log(anchor), log_span=std::log(anchor_hi)-log_anchor;
@@ -427,7 +496,7 @@ class CpuSolver {
         }
       });
       if(profile){prepare_s=seconds(stage_start);stage_start=Clock::now();}
-      pool.run(static_cast<size_t>(B)*nf,[&](size_t t,int id){
+      auto solve_global=[&](size_t t,int id){
         auto &w=work[id];const int i=t/nf,f=t%nf;auto &model=models[i];
         const double lo=bounds.data()[2*i],hi=bounds.data()[2*i+1],period=periods.data()[f];
         const size_t output_offset=static_cast<size_t>(i)*modes*nf+f;
@@ -443,9 +512,7 @@ class CpuSolver {
         unsigned word=0;bool ready=false,previous_ok=false;int level=-1;
         w.cache.clear();w.previous.clear();w.refined.clear();w.dense_values.clear();w.dense_cells=0;
         const double omega=md::two_pi<double>()/period;
-        for(int j=0;j<L;++j){w.ka[j]=omega/model.view.vp[j];w.kb[j]=model.view.vs[j]==0.?0.:omega/model.view.vs[j];const double z=model.view.vs[j]/omega;w.gammk[j]=2.*z*z;}
-        w.medium=model.view;w.medium.ka=w.ka.data();w.medium.kb=w.kb.data();w.medium.gammk=w.gammk.data();
-        w.medium.irho=model.irho.data();w.medium.irho2=model.irho2.data();w.medium.secular=secular_;
+        prepare_trace(model,omega,w);
         bool shifted_companion=false;
         auto search=[&](bool guarded,int begin=0){
         previous_ok=false;w.previous.clear();w.escalated=false;
@@ -484,14 +551,19 @@ class CpuSolver {
         if(shape_&&!shape_ok){
           const auto begin=profile?Clock::now():Clock::time_point{};
           unsigned attempt=0;
+          const auto relaxed_before=w.auto_relaxed_leaves;
           shape_ok=search_shape(model,period,lo,hi,K,tol,sampling_rtol_,w,attempt);
-          if(shape_ok){word|=attempt;level=8+static_cast<int>(w.policy.accuracy);}
+          if(shape_ok){
+            word|=attempt;
+            if(w.auto_relaxed_leaves!=relaxed_before)word|=1u<<17;
+            level=8+static_cast<int>(md::observation_accuracy(w.policy.accuracy));
+          }
           else{shape_diagnostics=attempt;++w.stats[26];w.roots.clear();}
           if(profile)w.adaptive_s+=seconds(begin);
         }
         if(!shape_ok&&w.policy.accuracy!=md::Accuracy::High){
           const auto begin=profile?Clock::now():Clock::time_point{};
-          level=search_observation(model,period,lo,hi,K,tol,w,word)?(w.policy.accuracy==md::Accuracy::Balanced?6:7):-1;
+          level=search_observation(model,period,lo,hi,K,tol,w,word)?(md::observation_accuracy(w.policy.accuracy)==md::Accuracy::Balanced?6:7):-1;
           if(profile)w.dense_s+=seconds(begin);
         }else if(!shape_ok)level=search(false);
         if(level>=1&&level<=3&&!(word&(8|32|64|512))){
@@ -519,15 +591,152 @@ class CpuSolver {
           if(std::isfinite(root)&&root>=.99*model.view.vs[L-1])cutoff=true;
           if(std::isfinite(root)&&accept<1.){double value=evaluate(w.medium,omega,root,w);if(!std::isfinite(value)||std::fabs(value)>accept){root=NAN;word|=128;++w.stats[11];}}
           velocity_data[output_offset+static_cast<size_t>(m)*nf]=root;
+          if(compute_group&&std::isfinite(root)){
+            const size_t cell=output_offset+static_cast<size_t>(m)*nf;
+            group_window(w.roots.data(),static_cast<int>(w.roots.size()),m,lo,hi,policy_.close_root_rtol,
+                         group_lower[cell],group_upper[cell],group_flag_data[cell]);
+          }
         }
         if(shape_&&!shape_ok)word|=8192|shape_diagnostics;
         if(cutoff)word|=16;if(word&16)++w.stats[7];flags_data[t]=word;levels_data[t]=level;counts_data[t]=ready?w.roots.size():-1;
-      });
+      };
+      if(!continuing){
+        pool.run(static_cast<size_t>(B)*nf,solve_global);
+      }else{
+        const int na=static_cast<int>(plan.anchors.size()), nt=static_cast<int>(plan.targets.size());
+        const double *p=periods.data();
+        auto phase_start=stage_start;
+        pool.run(static_cast<size_t>(B)*na,[&](size_t slot,int id){
+          const int i=slot/na,f=plan.anchors[slot%na];
+          const size_t t=static_cast<size_t>(i)*nf+f;
+          solve_global(t,id);
+          pred_flags[t]=md::P_ANCHOR;
+          ++work[id].stats[CONT_ANCHORS];
+          double *roots=plan.roots.data()+slot*K;
+          const int nr=counts_data[t];
+          if(nr>0)std::copy_n(work[id].roots.data(),nr,roots);
+          plan.safe[slot]=md::continuation_source_safe(roots,nr,K,flags_data[t],policy_.close_root_rtol);
+        });
+        if(profile){anchor_s=seconds(phase_start);phase_start=Clock::now();}
+        pool.run(static_cast<size_t>(B)*na,[&](size_t slot,int id){
+          const int i=slot/na,s=slot%na,f=plan.anchors[s];
+          const size_t t=static_cast<size_t>(i)*nf+f;
+          const int nr=counts_data[t];
+          const auto usable=[&](int other){
+            return std::abs(plan.anchors[other]-f)>1&&plan.safe[static_cast<size_t>(i)*na+other]&&
+                   counts_data[static_cast<size_t>(i)*nf+plan.anchors[other]]==nr;
+          };
+          auto &stats=work[id].stats;
+          if(!plan.safe[slot]||!((s>0&&usable(s-1))||(s+1<na&&usable(s+1)))){
+            stats[CONT_PRESCREEN_SKIPPED_ROOTS]+=std::max(0,nr);
+            return;
+          }
+          const auto &model=models[i];
+          const double omega=md::two_pi<double>()/p[f],*roots=plan.roots.data()+slot*K;
+          plan.differentiated[slot]=1;
+          for(int j=0;j<nr;++j){
+            double lo,hi;unsigned flag;
+            group_window(roots,nr,j,bounds.data()[2*i],bounds.data()[2*i+1],policy_.close_root_rtol,lo,hi,flag);
+            const auto g=md::group_velocity(model.view,omega,roots[j],lo,hi,group_rtol,policy_.close_root_rtol);
+            ++stats[CONT_DERIVATIVE_ROOTS];stats[CONT_DERIVATIVE_EVALS]+=g.evaluations;
+            stats[CONT_EVALS]+=g.evaluations;
+            if(!g.flags)plan.slopes[slot*K+j]=g.slope;
+            if(compute_group&&j<modes){
+              const size_t cell=(static_cast<size_t>(i)*modes+j)*nf+f;
+              group_data[cell]=g.velocity;group_flag_data[cell]=g.flags;
+            }
+          }
+        });
+        if(profile){slope_s=seconds(phase_start);phase_start=Clock::now();}
+        pool.run(static_cast<size_t>(B)*nt,[&](size_t target,int id){
+          const int i=target/nt,f=plan.targets[target%nt],s=plan.left_slot[f];
+          const size_t t=static_cast<size_t>(i)*nf+f,slot=static_cast<size_t>(i)*na+s;
+          const size_t left=static_cast<size_t>(i)*nf+plan.anchors[s],right=static_cast<size_t>(i)*nf+plan.anchors[s+1];
+          const auto &model=models[i];auto &w=work[id];
+          const double lo=bounds.data()[2*i],hi=bounds.data()[2*i+1];
+          if(hi<=lo||!model.sh_guide){solve_global(t,id);return;}
+          const int nr=counts_data[left];
+          unsigned flags=(flags_data[left]|flags_data[right])&4096u?md::P_SOURCE_UNCERTAIN:0u;
+          unsigned reason=0;
+          if(nr<=0||nr>K||counts_data[right]!=nr)reason=md::P_ROOT_COUNT;
+          else if(!plan.safe[slot]||!plan.safe[slot+1])reason=md::P_ANCHOR_UNSAFE;
+          else{
+            const double dl=md::continuation_log_step(p[f],p[plan.anchors[s]]);
+            const double dr=md::continuation_log_step(p[f],p[plan.anchors[s+1]]);
+            w.previous.resize(nr);w.roots.resize(nr);
+            reason=md::continuation_predict(plan.roots.data()+slot*K,plan.roots.data()+(slot+1)*K,
+                      plan.slopes.data()+slot*K,plan.slopes.data()+(slot+1)*K,nr,dl,dr,lo,hi,tol,
+                      w.previous.data(),w.roots.data());
+            if(!reason){
+              ++w.stats[CONT_CANDIDATES];
+              const double omega=md::two_pi<double>()/p[f],seeds[]={model.seed,model.water_seed};
+              prepare_trace(model,omega,w);
+              w.coarse.resize(nr);w.guarded.resize(nr);
+              bool audited=false;
+              reason=md::continuation_roots(w.medium,omega,dl,dr,lo,hi,w.previous.data(),w.roots.data(),
+                         nr,K,tol,accept,policy_.close_root_rtol,model.tx.data(),model.tn.data(),
+                         static_cast<int>(model.tx.size()),seeds,w.coarse.data(),w.guarded.data(),
+                         w.stats[CONT_EVALS],audited);
+              if(audited)flags|=md::P_AUDIT;
+              if(reason&md::P_AUDIT_FAILED)++w.stats[CONT_AUDIT_FAILED];
+            }
+          }
+          if(reason){
+            pred_flags[t]=flags|reason|md::P_FALLBACK;++w.stats[CONT_FALLBACKS];
+            solve_global(t,id);
+            return;
+          }
+          pred_flags[t]=flags|md::P_ACCEPTED;++w.stats[CONT_ACCEPTED];
+          unsigned word=2048u|md::CONTINUATION_APPROXIMATE;
+          for(int j=0;j<modes;++j){
+            const size_t cell=(static_cast<size_t>(i)*modes+j)*nf+f;
+            const double c=j<nr?w.roots[j]:NAN;
+            velocity_data[cell]=c;
+            if(j<nr){
+              if(c>=.99*model.view.vs[L-1])word|=16;
+              if(compute_group)group_window(w.roots.data(),nr,j,lo,hi,policy_.close_root_rtol,
+                                          group_lower[cell],group_upper[cell],group_flag_data[cell]);
+            }
+          }
+          if(word&16)++w.stats[7];
+          flags_data[t]=word;levels_data[t]=12;counts_data[t]=nr;
+        });
+        if(profile)target_s=seconds(phase_start);
+      }
       if(profile)solve_s=seconds(stage_start);
+      if(compute_group){
+        if(profile)stage_start=Clock::now();
+        pool.run(static_cast<size_t>(B)*nf,[&](size_t t,int id){
+          const int model=t/nf,f=t%nf;const size_t off=static_cast<size_t>(model)*modes*nf+f;
+          const double omega=md::two_pi<double>()/periods.data()[f];
+          for(int mode=0;mode<modes;++mode){
+            const size_t cell=off+static_cast<size_t>(mode)*nf;
+            const double c=velocity_data[cell];
+            if(continuing&&pred_flags[t]==md::P_ANCHOR){
+              const size_t slot=static_cast<size_t>(model)*plan.anchors.size()+plan.left_slot[f];
+              if(plan.differentiated[slot]&&mode<counts_data[t]){
+                ++work[id].stats[GROUP_REUSED];if(group_flag_data[cell])++group_invalid[id];continue;
+              }
+            }
+            md::GroupResult g;
+            if(!std::isfinite(c))g.flags=md::GROUP_MISSING_ROOT;
+            else if(group_flag_data[cell])g.flags=group_flag_data[cell];
+            else g=md::group_velocity(models[model].view,omega,c,group_lower[cell],group_upper[cell],group_rtol,policy_.close_root_rtol);
+            group_data[cell]=g.velocity;group_flag_data[cell]=g.flags;
+            group_evaluations[id]+=g.evaluations;if(g.flags)++group_invalid[id];
+          }
+        });
+        if(profile)group_s=seconds(stage_start);
+      }
     }
-    py::dict stats;for(int j=0;j<29;++j){unsigned long long v=0;for(auto&w:work)v+=w.stats[j];stats[counter_names[j]]=v;}
+    py::dict stats;for(int j=0;j<(continuation?CPU_COUNTERS:CONT_ANCHORS);++j){unsigned long long v=0;for(auto&w:work)v+=w.stats[j];stats[counter_names[j]]=v;}
     stats["threads"]=threads_;stats["strategy"]="qe_adaptive";
     stats["accuracy"]=md::accuracy_name(policy_.accuracy);
+    if(policy_.accuracy==md::Accuracy::Auto){
+      unsigned long long relaxed=0;
+      for(const auto &w:work)relaxed+=w.auto_relaxed_leaves;
+      stats["auto_relaxed_leaves"]=relaxed;
+    }
     stats["period_threshold"]=policy_.period_threshold;
     stats["sampling_capacity"]=CAP;
     stats["dense_tile"]=policy_.accuracy==md::Accuracy::High?policy_.cpu_dense_tile:64;
@@ -535,18 +744,40 @@ class CpuSolver {
     stats["refinement_cache_hits"]=reuse;
     unsigned long long dense_reuse=0;for(auto &w:work)dense_reuse+=w.dense_cache_hits;
     stats["dense_cache_hits"]=dense_reuse;
+    unsigned long long group_ev=0,invalid=0;
+    for(int id=0;id<threads_;++id){group_ev+=group_evaluations[id];invalid+=group_invalid[id];}
+    stats["group_evaluations"]=group_ev;stats["group_invalid"]=invalid;
+    if(continuation||compute_group)stats["evaluations"]=stats["evaluations"].cast<unsigned long long>()+group_ev+
+                                      (continuation?stats["continuation_evaluations"].cast<unsigned long long>():0);
     if(profile){py::dict timing;timing["model_prepare"]=prepare_s;timing["search_wall"]=solve_s;
       double sample=0.,inverse=0.,sort=0.,refine=0.,adaptive=0.,dense=0.;unsigned long long hits=0,misses=0;
       for(auto &w:work){sample+=w.sample_s;inverse+=w.inverse_s;sort+=w.sort_s;refine+=w.refine_s;adaptive+=w.adaptive_s;dense+=w.dense_s;hits+=w.cache_hits;misses+=w.cache_misses;}
-      timing["sample_evaluation_worker"]=sample;timing["density_inverse_worker"]=inverse;timing["sort_merge_worker"]=sort;timing["refinement_worker"]=refine;timing["adaptive_worker"]=adaptive;timing["dense_worker"]=dense;
+      timing["sample_evaluation_worker"]=sample;timing["density_inverse_worker"]=inverse;timing["sort_merge_worker"]=sort;timing["refinement_worker"]=refine;timing["adaptive_worker"]=adaptive;timing["dense_worker"]=dense;if(compute_group)timing["group_velocity"]=group_s;
+      if(continuing){
+        timing["continuation_anchor_search"]=anchor_s;timing["continuation_derivatives"]=slope_s;
+        timing["continuation_targets_including_fallback"]=target_s;
+      }
       stats["timings_s"]=timing;stats["cache_hits"]=hits;stats["cache_misses"]=misses;}
-    return py::make_tuple(output,flags,stats,levels,counts);
+    py::dict extras;
+    extras["group_velocity"]=compute_group?py::object(group_output):py::none();
+    extras["group_velocity_flags"]=compute_group?py::object(group_flags):py::none();
+    extras["prediction_flags"]=continuation?py::object(prediction):py::none();
+    return py::make_tuple(output,flags,stats,levels,counts,extras);
   }
 };
 
+void bind_review_groups(py::module_ &m);
 PYBIND11_MODULE(_cpu,m){
-  m.attr("ABI_VERSION")=8;m.attr("VERSION")="0.4.0";
-  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double,double,bool,double,int,int,int>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001,py::arg("secular")=0,py::arg("refinement")=1,py::arg("love_phase")=1).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false);
+  bind_review_groups(m);
+  m.attr("ABI_VERSION")=9;m.attr("VERSION")="0.5.0";
+  m.attr("SUPPORTS_CANONICAL_LOWER")=true;
+  m.attr("SUPPORTS_AUTO_ACCURACY")=true;
+  m.def("continuity_screen",&continuity_screen<float>,py::arg("periods").noconvert(),
+        py::arg("phase").noconvert(),py::arg("prediction"),py::arg("bilateral"));
+  m.def("continuity_screen",&continuity_screen<double>,py::arg("periods").noconvert(),
+        py::arg("phase").noconvert(),py::arg("prediction"),py::arg("bilateral"));
+  m.attr("SUPPORTS_CONTINUATION")=true;
+  py::class_<CpuSolver>(m,"CpuSolver").def(py::init<int,int,double,double,bool,double,int,int,int>(),py::arg("threads"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001,py::arg("secular")=0,py::arg("refinement")=1,py::arg("love_phase")=1).def("run",&CpuSolver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),py::arg("periods"),py::arg("bounds"),py::arg("nmodes"),py::arg("wave"),py::arg("automatic"),py::arg("tol"),py::arg("accept"),py::arg("profile")=false,py::arg("group_velocity")=false,py::arg("group_rtol")=.001,py::arg("canonical_lower")=false,py::arg("continuation")=false,py::arg("anchor_stride")=4);
   m.def("bounds",[](Array h,Array vp,Array vs,Array rho,int wave,py::object low,py::object high){
     int B=h.shape(0),L=h.shape(1);py::array_t<double> result({B,2});
     const bool auto_low=low.is_none(),auto_hi=high.is_none();double given_low=auto_low?0.:low.cast<double>(),given_hi=auto_hi?0.:high.cast<double>();

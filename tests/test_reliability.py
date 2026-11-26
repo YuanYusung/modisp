@@ -106,7 +106,10 @@ def test_cli_standalone_checker_and_forward_metadata(tmp_path):
     assert main(['check-modes',str(out),'--output',str(check)])==0
     with np.load(out) as z,np.load(check) as c:
         assert str(z['refinement'])=='chandrupatla' and str(z['love_strategy'])=='phase'
-        for key in c.files:np.testing.assert_array_equal(z[key],c[key])
+        assert z['continuity_flags'].shape == (1, 3)
+        for key in c.files:
+            forward_key = 'mode_reliability_flags' if key == 'continuity_flags' else key
+            np.testing.assert_array_equal(z[forward_key], c[key])
 
 
 @pytest.mark.parametrize('option',[dict(refinement='newton'),dict(love_strategy='track')])

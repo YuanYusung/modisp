@@ -61,11 +61,11 @@ reuse their native thread pool or device allocation across compatible calls.
 | `device` | `0` | CUDA ordinal after `CUDA_VISIBLE_DEVICES` mapping |
 | `threads` | up to 8 available CPUs | Persistent CPU worker count, 1–256 |
 | `cmin`, `cmax` | `None` | Automatic range; explicit values define a cropped search window |
-| `c_tol_rel` | preset | Relative refinement target: high `1e-6`, balanced `1e-5`, fast `1e-4`; an explicit value overrides it, subject to the evaluator's roundoff floor |
+| `c_tol_rel` | preset | Relative refinement target: high `1e-6`, auto/balanced `1e-5`, fast `1e-4`; an explicit value overrides it, subject to the evaluator's roundoff floor |
 | `f_accept` | `1.0` | Optional normalized-function acceptance bound |
 | `search_strategy` | `"shape_adaptive"` | Local shape consistency; `"qe_adaptive"` retains 0.3.0; `"uniform"` is legacy CUDA solid Rayleigh only |
-| `sampling_rtol` | preset | Shape-integral consistency tolerance: high `1e-3`, balanced `1e-2`, fast `5e-2`; explicit values apply only to shape search |
-| `accuracy` | `"balanced"` | Search/accuracy preset: `"high"`, `"balanced"` or `"fast"` (see below) |
+| `sampling_rtol` | preset | Shape-integral consistency tolerance: high `1e-3`, balanced `1e-2`, fast `5e-2`, auto `1e-2` to `5e-2`; explicit values apply only to shape search |
+| `accuracy` | `"auto"` | Options include `"auto"`, `"high"`, `"balanced"` and `"fast"` (see below) |
 | `secular` | `None` | Actual backend default: CUDA `"fast"`, CPU `"dunkin"`; legacy uniform `"dunkin"`. Explicit values override this policy. |
 | `refinement` | `"brent"` (adaptive) | `"brent"`, `"chandrupatla"`, `"legacy"`; uniform defaults to and requires legacy |
 | `love_strategy` | `"phase"` | SH phase counting with validated original-function brackets and scan fallback; `"scan"` retains the original search |
@@ -74,6 +74,11 @@ reuse their native thread pool or device allocation across compatible calls.
 | `workspace_bytes` | `256*1024**2` | Native work-buffer budget, excluding inputs/results and CUDA context |
 | `chunk_size` | `None` | Optional model-count cap per chunk |
 | `profile` | `False` | Collect stage timings and cache/queue analysis in `stats()` |
+| `group_velocity` | `False` | Additional FP64 group velocities with independent per-root flags |
+| `continuity_check` | `True` | Check neighboring phases and CUDA FP32 near-duplicates in adaptive auto/balanced/fast solves |
+| `group_rtol` | `1e-3` | Relative group-derivative consistency target, strictly between zero and one |
+| `frequency_strategy` | `"independent"` | `"anchor_continuation"` requests CPU or CUDA auto/balanced/fast prediction on at least eight unique periods |
+| `anchor_stride` | `4` | Continuation anchor spacing; integer of at least two |
 | `nc`, `block` | `512`, `256` | Legacy uniform settings |
 
 An explicit unavailable CUDA request raises `BackendUnavailableError`.
@@ -117,7 +122,18 @@ observation-grid fallback.
 |---|---:|---:|
 | `high` | `1e-3` | `1e-6` |
 | `balanced` | `1e-2` | `1e-5` |
+| `auto` | `1e-2` to `5e-2` | `1e-5` |
 | `fast` | `5e-2` | `1e-4` |
+
+With `accuracy="auto"`, shape search starts each interval at the balanced tolerance.
+It can accept a wider tolerance of `5e-2` when the five secular samples are finite,
+nonzero and share a sign, the normalized shape values are monotone with magnitude
+above 0.125, and the upper endpoint is below 99% of the half-space shear speed.
+A caller-supplied `sampling_rtol` fixes the tolerance on every interval. Auto uses
+balanced refinement and observation-grid spacing, including on `qe_adaptive`.
+The arithmetic precision remains the requested CPU FP64 or CUDA FP64/FP32.
+The same policy is available from the CLI with `--accuracy auto`. With an
+explicit `search_strategy="uniform"`, auto selects the legacy uniform configuration.
 
 Density and model-anchored critical/interface
 seeds initialize intervals; five-point integral comparisons drive local
@@ -130,9 +146,9 @@ sampling does not change the original signed secular function used for root
 brackets, refinement and `f_accept`. Searches collect two extra guard roots
 and return the requested ascending recovered prefix.
 
-Balanced/fast deliberately allow unresolved close pairs or clusters within the
+Auto, balanced and fast allow unresolved close pairs or clusters within the
 configured scale. Their returned integer ranks may shift after an omitted pair;
-they are **not certified physical mode indices**. Every balanced/fast trace
+they are **not certified physical mode indices**. A trace accepted by shape or observation-grid search with these presets
 has `TRACE_APPROXIMATE_SEARCH`, `approximate_search=True`, and
 `mode_index_uncertain=True`, even when no close pair was detected. This is a
 conservative warning about reduced verification, not a claim that every value
@@ -156,13 +172,18 @@ close-cluster, ordinal-shift and explicitly unjudged counts.
   the CLI output. Adaptive kernel reports record the selected precision.
 - `period`: a copy of the input periods; `mode`: ascending integers.
 - `trace_flags`, `numerical_flags`, `search_level`, `root_count`: `[B,T]`
-  search diagnostics. `numerical_flags` excludes only
-  `TRACE_RANGE_TRUNCATED`, separating user cropping from numerical failures.
+  search diagnostics. `numerical_flags` omits the user-cropping bit
+  `TRACE_RANGE_TRUNCATED` and the sampling diagnostic `TRACE_AUTO_RELAXED`.
 - `search_bounds`: `[B,2]`, determined before chunking.
-- `accuracy`: the preset used (`"high"`, `"balanced"`, `"fast"` or `"uniform"`).
+- `accuracy`: the preset used (`"auto"`, `"high"`, `"balanced"`, `"fast"` or `"uniform"`).
 - `secular`: the resolved `"dunkin"` or `"fast"` evaluator; `Solver.secular` retains the requested setting (`None` means backend default).
 - `approximate_search`, `mode_index_uncertain`, `close_root_risk`,
   `potentially_ambiguous`: `[B,T]` quality arrays.
+- `auto_relaxed` is a `[B,T]` boolean array on auto solves and `None` on other
+  presets. A true entry records use of the wider tolerance in the retained shape
+  result. The CLI saves it in the solve NPZ. The auto statistics include
+  `auto_relaxed_leaves` across attempted searches, `auto_relaxed_traces` across
+  retained traces before duplicate-period restoration, and `sampling_rtol_max`.
 - `close_root_mask`: `[B,nmodes,T]`, observed adjacent recovered roots within
   `close_root_rtol`. It cannot locate pairs missed by both samples.
 - `close_root_rtol`: the configured relative observation scale.
@@ -179,7 +200,9 @@ its window. On an approximate trace this is not evidence of physical absence.
 mode index on an approximate trace. An unresolved trace has all modes NaN. `root_count` is capped at
 `nmodes+2`, including two guard roots; an unresolved count is -1.
 
-`search_level=8/9/10` denotes high/balanced/fast shape acceptance.
+`search_level=8/9/10` denotes high, balanced/auto and fast shape acceptance, respectively.
+`search_level=12` denotes local frequency-continuation acceptance after the
+coarse domain audit; the corresponding trace is marked approximate.
 `3/5` denotes retained high adaptive/dense acceptance; `6` is the balanced
 observation grid and `7` the fast grid. Values 1/2/4 belong to historical 0.3.0 results. -1 denotes an unresolved
 search, -2 legacy uniform, -3 an analytically empty SH family, and -4 an empty
@@ -204,6 +227,8 @@ workspace or root-conflict flag.
 | 4096 | `TRACE_CLOSE_ROOT_RISK` | Observed close roots or a sampled hidden-pair trough hint |
 | 8192 | `TRACE_ADAPTIVE_FALLBACK` | Local shape search required the retained 0.3.0 search |
 | 32768 | `TRACE_FP64_REPAIR` | An ambiguous FP32 high trace entered the FP64 shape recheck |
+| 65536 | `TRACE_CONTINUATION_APPROXIMATE` | A local frequency proposal was accepted; completeness is approximate |
+| 131072 | `TRACE_AUTO_RELAXED` | The retained auto shape search used wider sampling on at least one interval |
 
 A budget too small for one model raises `MemoryError` before allocation.
 Hardware allocation and driver failures raise explicitly. `stats()` reports
@@ -274,7 +299,7 @@ wrong branch or persistent omission can pass. No field certifies physical mode
 identity, and the separate check is excluded from default solver timings.
 
 CLI: `modisp forward ... --refinement chandrupatla --love-strategy phase
---check-continuity` stores continuity arrays in the solve NPZ. Or run
+--check-continuity` stores per-mode heuristic flags under `mode_reliability_flags[B,K,T]` in the solve NPZ. The standalone checker retains its historical `continuity_flags[B,K,T]` key. Or run
 `modisp check-modes solved.npz --output checked.npz` without solving again.
 The check command returns zero on successful execution; inspect its flags and
 summary to interpret the numerical observations.
@@ -285,4 +310,92 @@ configured scan and retains `TRACE_LOVE_PHASE_FALLBACK=16384`. Inspect
 `love_phase_accepted` and `love_phase_fallbacks` in stats. The default phase root
 tolerance is `min(c_tol_rel,1e-8)` before original-function refinement. General
 Rayleigh root discovery, preset budgets and close-cluster limitations remain
-as documented above. CPU and CUDA package versions and private ABI 8 must match.
+as documented above. CPU and CUDA package versions and private ABI 9 must match.
+
+## Phase continuity review
+
+Auto, balanced and fast compare each interior period with its neighbors on the sorted,
+distinct FP64 input grid. A mode is eligible when both neighbors are finite and
+their log-period separation is at most 0.25. A missing center or a speed below
+0.95 times the lower neighbor speed or above 1.05 times the higher speed
+triggers review. CUDA FP32 also checks adjacent positive phase roots separated
+by at most 16 representable FP32 values, including at the endpoints.
+
+Review uses FP64 independent adaptive searches on the selected model–period
+pairs. Where possible a shorter velocity interval starts at the original lower
+bound to preserve mode order. A successful shortened search must recover the
+requested prefix and two guard roots. A failed or inconclusive prefix uses the
+original full bounds. Confirmed changes replace the whole requested sequence,
+trace diagnostics, root count and any requested group results together.
+
+The solver and forward NPZ expose `continuity_flags[B,T]` (uint8), restored to
+input order including repeats. `--no-continuity-check` disables the neighbor
+and FP32-duplicate checks. Independent high, uniform and disabled independent
+balanced/fast solves have no review array. Auto also sends traces with unresolved
+brackets, unconverged search or conflicting root families for independent FP64
+review, including endpoints and single-period calls. These checks run with either
+setting of `continuity_check`.
+Explicit continuation still verifies spectral evidence found during its own audit.
+
+| `ContinuityFlag` | Value | Interpretation |
+|---|---:|---|
+| `REVIEWED` | 1 | The trace was sent for an independent FP64 review |
+| `REPAIRED` | 2 | The review replaced this trace |
+| `UNRESOLVED` | 4 | The review could not confirm an ordered prefix. Original results are retained |
+| `NO_BILATERAL` | 8 | Endpoint, wide gap, or no mode with two finite neighbors |
+| `ENVELOPE` | 16 | A supported mode is missing or outside the bilateral envelope |
+| `CLOSE_FP32` | 32 | Two adjacent FP32 output roots are within 16 ULP |
+| `PREDICTION` | 64 | Continuation found evidence requiring independent verification |
+| `SEARCH` | 128 | Auto received an unresolved bracket, an unconverged trace or conflicting root families |
+
+Build the core and CUDA wheels from this branch together. The core Python package
+uses its bundled native CPU extension for screening results from both backends.
+
+A zero flag records a completed screen with no trigger on a supported trace.
+Endpoint omissions and a consistently missing branch across several periods can
+escape this test. High verification is a numerical search. Continuity alone
+cannot establish physical mode identity. `stats()` counts suspected traces,
+shortened and full searches, repaired and unresolved traces once per computed
+period using the `continuity_` prefix.
+
+## Group velocity and frequency continuation (0.5.0)
+
+`Solver(group_velocity=True)` adds FP64 `group_velocity[B,K,T]`, uint32
+`group_velocity_flags` and boolean `group_velocity_valid` (also named
+`group_velocity_mask`). These are `None` when disabled. Group failures do not
+change accepted phase values or their status. `GroupVelocityFlag` reports
+missing roots, polish failure, unstable derivatives, ill conditioning, close
+roots and nonfinite evaluations; valid means finite with zero group flags.
+
+`frequency_strategy="anchor_continuation"` requests CPU or CUDA auto/balanced/fast
+prediction between global-search anchors. It activates only with at least
+eight unique periods. High accuracy, smaller grids and grids without
+interior targets within the anchor log-gap limit use independent solves,
+recording `frequency_strategy_used` and `frequency_strategy_reason`.
+All output arrays retain input order and duplicates. Adaptive independent
+search solves each exactly equal FP64 input period once. CUDA high-accuracy
+FP32 keeps all requested traces because its repair budget depends on batch
+size. In `stats()`, `periods_requested` is the length of the input and
+`periods_computed` is the number sent to the native solver per model.
+Native evaluation counters count the work actually performed.
+
+Requested continuation
+provides `prediction_flags[B,T]`; independent search uses `None`.
+`PredictionFlag.SOURCE_SEARCH_UNCERTAIN=64` retains a bounding anchor's
+sampling-risk hint. Actual close source roots still force global fallback.
+Both anchors must report the same positive root count `NR <= nmodes+2`,
+with isolated roots and usable slopes. Local solving corrects those `NR`
+roots and leaves any remaining requested modes NaN. When `NR < nmodes+2`,
+the coarse audit includes the entire remaining original search interval;
+otherwise it checks the guarded prefix. Zero or unequal source counts and
+unsafe predictions use global fallback. These audits remain approximate.
+Fallback reasons use one of `PredictionFlag.ROOT_COUNT_UNSAFE=128`,
+`ANCHOR_UNSAFE=256`, `WINDOW_UNSAFE=512`, `BRACKET_FAILED=1024`,
+`CORRECTION_FAILED=2048`, or `AUDIT_FAILED=32`, alongside `FALLBACK=4`.
+`stats()` exposes matching `continuation_fallback_<reason>` counts with
+lowercase reason names. They count computed traces before duplicate-period
+restoration. `continuation_local_success_rate` divides accepted targets by
+accepted plus fallback targets, excluding anchors and bypasses; it is
+`None` when that denominator is zero.
+`frequency_strategy`, `anchor_stride` and `group_rtol` appear in metadata.
+Legacy uniform rejects both features. See [algorithms, flags and examples](GROUP_CONTINUATION_0_5_0.md).

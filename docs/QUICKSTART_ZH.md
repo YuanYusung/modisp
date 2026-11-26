@@ -6,7 +6,7 @@ P–SV/Scholte 型根及 Love 多模态相速度。
 ## 安装
 
 ```sh
-python -m pip install /path/to/modisp-0.4.0-<匹配标签>.whl
+python -m pip install /path/to/modisp-0.5.0-<匹配标签>.whl
 modisp doctor
 ```
 
@@ -14,7 +14,7 @@ CPU 使用不需要 CUDA。有 NVIDIA GPU 时，再安装版本完全一致的
 `modisp_cuda12` wheel。离线安装：
 
 ```sh
-python -m pip install --no-index --find-links /path/to/wheelhouse 'modisp[cuda12]==0.4.0'
+python -m pip install --no-index --find-links /path/to/wheelhouse 'modisp[cuda12]==0.5.0'
 ```
 
 从源码安装使用 `python -m pip install <CPU源码包.tar.gz>`，需要 C++17
@@ -103,12 +103,47 @@ with Solver(backend="auto", accuracy="balanced", close_root_rtol=0.005) as solve
 显式 `c_tol_rel` 仍优先。`search_level=8/9/10` 分别表示 high/balanced/fast 形状搜索；6/7 为旧路径的观测网格。
 详见[性能与精度报告](PERFORMANCE.md)。
 
+自适应搜索默认使用 `accuracy="auto"`，也可在命令行显式传入 `--accuracy auto`。
+五点采样同号、归一化振幅单调且绝对值均大于 0.125、区间上界低于半空间横波速度的
+99% 时，可将形状一致性容差从 `1e-2` 放宽到 `5e-2`。相速度根的默认精修容差为
+`1e-5`；显式 `sampling_rtol` 可固定所有区间的采样容差。用形状为 `[B,T]` 的
+`result.auto_relaxed` 查看哪些模型和周期保留了放宽采样的结果。
+自动档独立复核搜索未收敛、括根未解或根族冲突的轨迹，包含单周期和端点。
+可在 `continuity_flags` 中按 `ContinuityFlag.SEARCH` 检索这些轨迹。
+
 ### CUDA 单精度
 
 用 `Solver(backend="cuda", precision="float32")` 启用单精度自适应求解。
 相速度输出为 `float32`。在 `high` 中，符号有歧义的少量轨迹可用
 FP64 复核，`TRACE_FP64_REPAIR` 和 `stats()["fp64_repair_traces"]` 记录
-复核情况。精度选项与 `high`、`balanced`、`fast` 预设分别设置。
+复核情况。精度选项与 `auto`、`high`、`balanced`、`fast` 预设分别设置。
+
+## 群速度与跨频率预测（0.5.0）
+
+```python
+with Solver(backend="cuda", group_velocity=True, group_rtol=1e-3,
+            frequency_strategy="anchor_continuation", anchor_stride=4) as solver:
+    result = solver(*model.T, periods, nmodes=3)
+    group = result.group_velocity          # 始终 FP64，[B,K,T]
+    valid = result.group_velocity_valid    # 有限且群速度 flags 为零
+    print(result.frequency_strategy_used, result.frequency_strategy_reason)
+```
+
+自适应独立搜索会复用完全相同的输入周期，输出保留原始顺序和重复项。
+CUDA 的 FP32 high 路径保留整批周期，以维持原有的复核预算。
+`stats()` 中的 `periods_requested` 和 `periods_computed` 分别给出请求周期数和每个模型实际计算的周期数。
+
+群速度通过频散方程的局部隐式导数求得，单个周期也能计算。私有根精修
+不修改相速度输出；群速度计算失败时独立标记并保留 NaN。
+`group_velocity_flags` 使用 `GroupVelocityFlag`，涵盖缺根、精修失败、
+导数不稳定、病态条件、近根和非有限值。未启用时群速度相关数组为 `None`。
+
+预测模式在 CPU 和 CUDA 的 balanced/fast、自适应搜索且至少八个不同周期时启用。
+内部排序去重后恢复全部输出的输入顺序。high 或较小周期网格保留
+独立搜索并记录原因。锚点全局搜索，中间周期局部预测；不安全时回退全局。
+局部接受带 `TRACE_CONTINUATION_APPROXIMATE=65536`，粗域审查不构成
+根完整性或物理分支身份的证明。两项功能默认关闭，可分别使用。
+详见[算法与标志说明](GROUP_CONTINUATION_0_5_0.md)。
 
 ## 诊断和编号
 
@@ -143,3 +178,5 @@ modisp doctor
 
 NPZ 输出保留速度、mask、状态、标志、搜索范围和实际后端。未收敛时退出码
 为 2，文件仍完整写出。完整参数说明见 [Python API](API.md)。
+
+自动档、balanced 和 fast 默认按升序比较互异周期上同阶相速度。中心根缺失或超出两侧包络 5% 时，仅复核受影响的模型和周期。CUDA FP32 还检查相邻根间距是否小于等于 16 ULP。结果的 `continuity_flags[B,T]` 通过 `ContinuityFlag.REVIEWED`、`REPAIRED`、`UNRESOLVED`、`NO_BILATERAL` 等位记录证据。端点和持续多个周期的漏支可能逃过筛查。可用 `Solver(continuity_check=False)` 或 CLI 的 `--no-continuity-check` 关闭默认筛查。

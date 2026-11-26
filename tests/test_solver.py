@@ -60,11 +60,11 @@ def fixture_dir():
     return directory
 
 
-def test_default_is_balanced_and_high_explicit():
+def test_default_is_auto_and_high_explicit():
     with md.Solver(backend=BACKEND, threads=1) as solver:
-        assert solver.accuracy == "balanced"
+        assert solver.accuracy == "auto"
         out = solver([0.], [6.], [3.5], [2.7], [1.], nmodes=1)
-    assert out.accuracy == "balanced"
+    assert out.accuracy == "auto"
     with md.Solver(backend=BACKEND, threads=1, accuracy="high") as solver:
         high = solver([0.], [6.], [3.5], [2.7], [1.], nmodes=1)
     assert high.accuracy == "high"

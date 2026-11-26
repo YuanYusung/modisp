@@ -1,6 +1,6 @@
 # modisp CUDA 12 plugin
 
-This optional distribution adds the CUDA backend to `modisp==0.4.0`. It requires
+This optional distribution adds the CUDA backend to `modisp==0.5.0`. It requires
 an NVIDIA driver compatible with CUDA 12 and a supported GPU. Binary wheels
 include the static CUDA runtime; a CUDA toolkit is required only to compile the
 source distribution. The CPU base package requires neither a GPU nor CUDA.
@@ -13,7 +13,7 @@ use `secular="dunkin"` explicitly for the retained reference evaluator.
 CPU fallback and legacy uniform default to Dunkin.
 The public API and diagnostics are documented in the base package.
 
-Version 0.4.0 uses private ABI 8. Install the matching CPU and CUDA packages.
+Version 0.5.0 uses private ABI 9. Install the matching CPU and CUDA packages.
 Adaptive Rayleigh and Love can use `Solver(backend="cuda", precision="float32")`.
 The default remains FP64. FP32 high can recheck a bounded set of ambiguous
 traces in FP64, recorded in the trace flags and stats. Balanced and fast

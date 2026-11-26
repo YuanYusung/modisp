@@ -35,8 +35,10 @@ RESULTS = {"phase_velocity": (np.float64, "modes"),
 
 class GpuMonitor:
     """Observe actual compute, not resident contexts, without touching peers."""
-    def __init__(self, allowed):
+    def __init__(self, allowed, background_names=()):
         self.allowed = allowed
+        self.background_names = set(background_names)
+        self.background_samples = []
         self.competitors = []
         self.peak_mib = {}
         self.samples = []
@@ -58,7 +60,10 @@ class GpuMonitor:
             if pid in self.allowed and fields[9].isdigit():
                 self.peak_mib[pid] = max(self.peak_mib.get(pid, 0), int(fields[9]))
             if pid not in self.allowed and fields[2] == "C" and fields[3].isdigit() and int(fields[3]) > 0:
-                self.competitors.append(line.strip())
+                if fields[-1].rsplit("/", 1)[-1] in self.background_names:
+                    self.background_samples.append(line.strip())
+                else:
+                    self.competitors.append(line.strip())
 
     def check(self):
         if self.proc.poll() is not None:

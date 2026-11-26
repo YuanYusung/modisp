@@ -1,5 +1,14 @@
 # Performance measurement and ModePhys workflow
 
+RTX 5050 and A800 use the same FP32 sampler and parallel FP64 interval
+classification. The FP64 CPU solver uses comparisons to find the normalization
+scale in each Rayleigh layer.
+
+Adaptive searches default to `accuracy="auto"` with FP64 arithmetic. See the
+[methods guide](GROUP_CONTINUATION_0_5_0.md) for the optional group velocity and
+anchor continuation calculations. Continuation can cost more than independent
+search.
+
 > For 0.3.2 see [the fresh same-host comparison](SAME_HOST_0_3_2.md) and
 > [the fast-secular method report](SECULAR_FAST_0_3_2.md).
 > For 0.3.1 use [the shape-adaptive validation report](SHAPE_ADAPTIVE_0_3_1.md).
@@ -167,7 +176,7 @@ benchmarked inputs. These speed ratios do **not** apply to the corrected code.
 
 ### Original 0.3.0 accuracy presets
 
-Version 0.3.0 adds `accuracy="high"|"balanced"|"fast"`. The default is
+Version 0.3.0 introduced `accuracy="high"|"balanced"|"fast"`. Its default was
 `balanced`; `high` reproduces the 0.2.1 search schedule and outputs bit for bit.
 Every preset keeps the FP64 secular function, FP64 bracket refinement, root
 ordering and diagnostics. The presets only change adaptive sampling, the
@@ -233,7 +242,7 @@ The design note's 12–15x estimate is not claimed: the measured per-trace FP64
 evaluation count and dense fallback floor do not support it, and this release
 keeps the physical reference acceptance rather than reproducing the old coarse
 scan's dense-root errors. `fast` is an explicit opt-in with a larger error bound;
-`balanced` is the production default.
+`balanced` was the 0.3.0 production default.
 
 
 ## 0.2.1 history

@@ -11,6 +11,7 @@
 namespace py = pybind11;
 
 void bind_qe(py::module_ &m);
+void bind_review_groups(py::module_ &m);
 
 struct md_cuda_state;
 struct md_refine_state;
@@ -339,9 +340,10 @@ class Refine {
 }  // namespace
 
 PYBIND11_MODULE(_cuda, m) {
-  m.attr("ABI_VERSION")=8;
-  m.attr("VERSION")="0.4.0";
+  m.attr("ABI_VERSION")=9;
+  m.attr("VERSION")="0.5.0";
   bind_qe(m);
+  bind_review_groups(m);
   m.doc() = "CUDA kernels for GPU-accelerated surface-wave dispersion forward "
             "modeling. Low-level stage interface; the public API is in "
             "modisp.__init__.";

@@ -1,5 +1,28 @@
 # Changes
 
+## 0.5.0 — 2026-11-26
+
+- Default to adaptive `auto` accuracy with FP64 phase arithmetic. Use
+  local evidence to adjust sampling in the shape-adaptive search.
+- Add a default phase-continuity review with targeted FP64 rechecks and
+  flags for repaired or unresolved results. Reuse work across repeated
+  periods and optimize CPU and CUDA phase searches.
+- Add opt-in FP64 implicit group velocities on CPU and CUDA, with private
+  root polishing, derivative consistency checks, per-mode flags and a
+  separate validity mask. FP32 phase output can also request FP64 groups.
+- Add opt-in CPU and CUDA anchor continuation for auto, balanced and fast
+  adaptive solves on at least eight unique periods. Local brackets and a
+  coarse domain audit precede acceptance. Unsafe attempts use the global
+  search. Locally accepted traces carry `TRACE_CONTINUATION_APPROXIMATE`.
+- Distinguish conservative source sampling hints from observed close-root
+  pairs; keep actual close-root fallback and record source hints separately.
+- Preserve original period order and duplicates. Report the requested and
+  used frequency strategy, bypass reasons and prediction flags.
+- Extend CLI NPZ output, stats and kernel metadata; keep absent optional
+  arrays out of NPZ files. Bump matching packages to 0.5.0 and private ABI 9.
+- Add analytic group checks and continuation regression/benchmark coverage.
+  See [methods and usage](docs/GROUP_CONTINUATION_0_5_0.md).
+
 ## 0.4.0 — 2026-11-10
 
 - Add opt-in CUDA FP32 for adaptive Rayleigh and Love via

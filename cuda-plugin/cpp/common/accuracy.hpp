@@ -8,7 +8,12 @@
 
 namespace md {
 
-enum class Accuracy : int { High = 0, Balanced = 1, Fast = 2, Uniform = 3 };
+enum class Accuracy : int { High = 0, Balanced = 1, Fast = 2, Uniform = 3, Auto = 4 };
+
+// Auto uses balanced observation spacing, root refinement and fallback.
+inline Accuracy observation_accuracy(Accuracy accuracy) {
+  return accuracy==Accuracy::Auto ? Accuracy::Balanced : accuracy;
+}
 
 struct AccuracyPolicy {
   Accuracy accuracy = Accuracy::High;
@@ -36,9 +41,10 @@ inline AccuracyPolicy make_accuracy_policy(int accuracy, double period_threshold
   p.close_root_rtol=close_root_rtol;
   // Observation grids are selected by the solver; these legacy schedule
   // fields preserve the high path. period_threshold is compatibility metadata.
-  if(p.accuracy==Accuracy::Balanced || p.accuracy==Accuracy::Fast){
-    p.period_threshold=period_threshold>0.0?period_threshold:(p.accuracy==Accuracy::Balanced?1.0:0.63);
-    p.cpu_dense_tile=p.accuracy==Accuracy::Balanced?64:32;
+  const Accuracy observation=observation_accuracy(p.accuracy);
+  if(observation==Accuracy::Balanced || observation==Accuracy::Fast){
+    p.period_threshold=period_threshold>0.0?period_threshold:(observation==Accuracy::Balanced?1.0:0.63);
+    p.cpu_dense_tile=observation==Accuracy::Balanced?64:32;
     // Smaller GPU tiles / larger caches were measured and rejected: no
     // material speed-up on A800, while memory and launch work increased.
     p.reuse_refinement=false;
@@ -52,6 +58,7 @@ inline const char *accuracy_name(Accuracy a) {
     case Accuracy::Balanced: return "balanced";
     case Accuracy::Fast: return "fast";
     case Accuracy::Uniform: return "uniform";
+    case Accuracy::Auto: return "auto";
   }
   return "unknown";
 }

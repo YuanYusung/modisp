@@ -1,6 +1,6 @@
 # Compatibility
 
-modisp 0.4.0 requires Python 3.10 or newer. The CPU extension and the optional
+modisp 0.5.0 requires Python 3.10 or newer. The CPU extension and the optional
 CUDA plugin share private ABI version 8. Install the matching distributions
 together.
 CUDA adaptive solvers default to `secular="fast"`; CPU and legacy uniform

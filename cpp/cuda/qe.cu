@@ -18,6 +18,8 @@
 #include "common/accuracy.hpp"
 #include "common/physics.hpp"
 #include "common/shape.hpp"
+#include "common/group_velocity.hpp"
+#include "common/continuation.hpp"
 #ifndef MD_DENSITY_TABLE
 #define MD_DENSITY_TABLE 1
 #endif
@@ -52,21 +54,22 @@ enum Stat { EVALS, EXTREMA, BRACKETS, ADAPT_OK, DENSE_OK, FAILED,
             CAPACITY_HITS, CUTOFFS, NONFINITES, REFINE_FAILURES, SEARCHES,
             ACCEPT_REJECTED, ANALYTIC_EMPTY, RANGE_EMPTY, VERIFICATIONS, CONFLICTS, CACHE_HITS, CACHE_MISSES,
             EARLY_ACCEPTS, VERIFICATION_SKIPPED, DENSE_COARSE_OK, DENSE_FINE_ESCALATED, TROUGH_RISKS,
-            SHAPE_ACCEPTED,SHAPE_SUBDIVISIONS,SHAPE_REUSED,SHAPE_DEPTH_LIMIT,SHAPE_WORK_LIMIT,LEGACY_FALLBACKS,LOVE_PHASE_OK,LOVE_PHASE_FALLBACK,FP64_REPAIRS,NSTATS };
+            SHAPE_ACCEPTED,SHAPE_SUBDIVISIONS,SHAPE_REUSED,SHAPE_DEPTH_LIMIT,SHAPE_WORK_LIMIT,LEGACY_FALLBACKS,LOVE_PHASE_OK,LOVE_PHASE_FALLBACK,FP64_REPAIRS,GROUP_EVALS,GROUP_INVALID,CONT_ANCHORS,CONT_ACCEPTED,CONT_FALLBACKS,CONT_AUDIT_FAILED,CONT_EVALS,CONT_CANDIDATES,GROUP_REUSED,CONT_DERIVATIVE_ROOTS,CONT_DERIVATIVE_EVALS,CONT_PRESCREEN_SKIPPED_ROOTS,AUTO_RELAXED_LEAVES,SHAPE_FRONTIER_OVERFLOWS,SHAPE_FRONTIER_RETRIES,SHAPE_FRONTIER_DISCARDED_EVALS,NSTATS };
 const char *stat_names[NSTATS] = {
     "evaluations", "extrema_proposals", "brackets", "adaptive_converged",
     "dense_converged", "unconverged", "capacity_hits", "near_cutoff",
     "nonfinite", "refinement_failed", "searches", "rejected_f", "analytical_empty", "range_empty", "verification_traces", "family_conflicts", "cache_hits", "cache_misses",
     "early_accepts", "verification_skipped", "dense_coarse_accepted", "dense_fine_escalated", "trough_risks",
-    "shape_accepted","shape_subdivisions","shape_reused","shape_depth_limit","shape_work_limit","legacy_fallbacks","love_phase_accepted","love_phase_fallbacks","fp64_repair_traces"};
+    "shape_accepted","shape_subdivisions","shape_reused","shape_depth_limit","shape_work_limit","legacy_fallbacks","love_phase_accepted","love_phase_fallbacks","fp64_repair_traces","group_evaluations","group_invalid","continuation_anchor_traces","continuation_accepted","continuation_fallbacks","continuation_audit_failed","continuation_evaluations","continuation_candidates","group_reused","continuation_derivative_roots","continuation_derivative_evaluations","continuation_prescreen_skipped_roots","auto_relaxed_leaves","shape_frontier_overflows","shape_frontier_retries","shape_frontier_discarded_evaluations"};
 
 struct Device {
   double *d, *a, *b, *r, *period, *bounds, *ia, *ib, *irho, *irho2, *tx, *tn, *seeds, *cache_x, *cache_y;
+  double *continuation_constants;
   float *float_models,*float_limits;
   int *nt, *cache_n, *queue, *next_queue, *queue_n, *next_n, *cursor;
   int wave, automatic, canonical_lower, guarded, profile, secular, refinement, love_phase;
   int accuracy, accept_level1, accept_level2, verify_safe_skip, allow_dense_early;
-  int shape;double sampling_rtol;double *shape_x;int *shape_n;
+  int shape,auto_sampling;double sampling_rtol;double *shape_x;int *shape_n;
   double close_root_rtol;
   double period_threshold, gap_factor, dense_gap_factor, trough_threshold;
   int dense_floor4, dense_floor5, dense_factor4, dense_factor5, dense_tile;
@@ -76,7 +79,14 @@ struct Device {
   double *lo, *hi, *flo, *fhi, *roots, *previous, *output;
   int *count, *prev_count, *status, *active, *level;
   unsigned *flags;
+  int *anchor_left=nullptr,*anchor_right=nullptr;
+  unsigned *prediction_flags=nullptr,*group_flags=nullptr;
+  double *slopes=nullptr,*group_output=nullptr;
   unsigned long long *stats;
+  bool row_periods=false;
+  __device__ double trace_period(int t,int nf) const {
+    return period[row_periods?t:t%nf];
+  }
 };
 
 // All lanes reach this at the end of block-owned sampling work. Integer
@@ -305,7 +315,7 @@ __global__ void love_phase_search(Device st,int traces,int L,int nf,int K,int mo
   for(int t=blockIdx.x;t<traces;t+=gridDim.x){
     if(!st.active[t])continue;
     const int model=t/nf;const size_t offset=static_cast<size_t>(model)*L,p=static_cast<size_t>(t)*K;
-    const double omega=md::two_pi<double>()/st.period[t%nf],low=st.bounds[2*model],upper=st.bounds[2*model+1];
+    const double omega=md::two_pi<double>()/st.trace_period(t,nf),low=st.bounds[2*model],upper=st.bounds[2*model+1];
     double high=upper;
     auto base=medium(st,model,L);
     if constexpr (!FP32) {
@@ -371,7 +381,7 @@ __device__ void adaptive_one(Device st,int L,int nf,int K,double delta,double to
   __shared__ int n, extra, bad, overflow;
   const int model=t/nf;
   const size_t off=static_cast<size_t>(model)*L;
-  const double per=st.period[t%nf],omega=md::two_pi<double>()/per;
+  const double per=st.trace_period(t,nf),omega=md::two_pi<double>()/per;
   for (int i=threadIdx.x; i<L; i+=blockDim.x) {
     h[i]=st.d[off+i]; a[i]=st.a[off+i]; b[i]=st.b[off+i]; r[i]=st.r[off+i];
     ia[i]=st.ia[off+i]; ib[i]=st.ib[off+i];
@@ -501,7 +511,7 @@ __device__ void dense_one(Device st,int L,int nf,int K,int floor_cells,int facto
   double *ka=ib+L,*kb=ka+L,*gammk=kb+L;
   __shared__ int nr, bad;
   const size_t off=static_cast<size_t>(t/nf)*L;
-  const double omega=md::two_pi<double>()/st.period[t%nf];
+  const double omega=md::two_pi<double>()/st.trace_period(t,nf);
   for (int i=threadIdx.x; i<L; i+=blockDim.x) {
     h[i]=st.d[off+i]; a[i]=st.a[off+i]; b[i]=st.b[off+i]; r[i]=st.r[off+i];
     ia[i]=st.ia[off+i]; ib[i]=st.ib[off+i];
@@ -516,7 +526,7 @@ __device__ void dense_one(Device st,int L,int nf,int K,int floor_cells,int facto
   if (!(upper>cmin)) { if (!threadIdx.x) st.count[t]=0; return; }
   // Scale dense fallback with the density estimate and water optical thickness,
   // with a 32768-cell floor and an explicit workspace limit.
-  const double need=md::dense_workload(med,st.period[t%nf],cmin,upper);
+  const double need=md::dense_workload(med,st.trace_period(t,nf),cmin,upper);
   if (!isfinite(need) || need>524288.0) {
     if (!threadIdx.x) {
       st.status[t]=1; st.count[t]=-1; st.flags[t]|=WORKSPACE;
@@ -560,7 +570,7 @@ __device__ void observation_one(Device st,int L,int nf,int K,int modes,double to
   double *ia=r+L,*ib=ia+L,*ka=ib+L,*kb=ka+L,*gammk=kb+L;
   __shared__ int nr,bad,n,end;
   const size_t off=static_cast<size_t>(t/nf)*L;
-  const double period=st.period[t%nf],omega=md::two_pi<double>()/period;
+  const double period=st.trace_period(t,nf),omega=md::two_pi<double>()/period;
   for(int i=threadIdx.x;i<L;i+=blockDim.x){
     h[i]=st.d[off+i];a[i]=st.a[off+i];b[i]=st.b[off+i];r[i]=st.r[off+i];
     ia[i]=st.ia[off+i];ib[i]=st.ib[off+i];
@@ -572,7 +582,7 @@ __device__ void observation_one(Device st,int L,int nf,int K,int modes,double to
       {h,a,b,r,ia,ib,L,st.wave,MD_TRACE_CONSTANTS?ka:nullptr,MD_TRACE_CONSTANTS?kb:nullptr,
        MD_TRACE_CONSTANTS?gammk:nullptr,st.irho+off,st.irho2+off,st.secular,st.refinement},off);
   const double lower=st.bounds[2*(t/nf)],upper=st.bounds[2*(t/nf)+1];
-  const double target=st.close_root_rtol*(st.accuracy==1?.5:1.);
+  const double target=st.close_root_rtol*((st.accuracy==1||st.accuracy==4)?.5:1.);
   const double origin=log(lower),span=log(upper)-origin,need=ceil(span/log1p(target));
   if(!isfinite(need)||need>524288.){
     if(!threadIdx.x){st.flags[t]|=WORKSPACE|UNCONVERGED;st.level[t]=-1;st.count[t]=-1;atomicAdd(&st.stats[CAPACITY_HITS],1ULL);}
@@ -640,7 +650,7 @@ __device__ void observation_one(Device st,int L,int nf,int K,int modes,double to
     }
     if(bad){st.flags[t]|=UNCONVERGED;if(bad&1)st.flags[t]|=NONFINITE;st.level[t]=-1;st.count[t]=-1;}
     else{
-      st.level[t]=st.accuracy==1?6:7;st.count[t]=min(nr,K);
+      st.level[t]=(st.accuracy==1||st.accuracy==4)?6:7;st.count[t]=min(nr,K);
       if(md::has_close_roots(st.roots+roots,min(nr,K),st.close_root_rtol))st.flags[t]|=4096u;
       atomicAdd(&st.stats[VERIFICATION_SKIPPED],1ULL);
     }
@@ -694,7 +704,7 @@ __global__ void refine(Device st, int traces, int L, int nf, int K, double tol) 
   if(st.status[t]||m>=st.count[t])return;
   const size_t p=static_cast<size_t>(t)*K+m;
   double lo=st.lo[p], hi=st.hi[p], fl=st.flo[p], fh=st.fhi[p];
-  const double omega=md::two_pi<double>()/st.period[t%nf];
+  const double omega=md::two_pi<double>()/st.trace_period(t,nf);
   int eval_count=0;
   bool good=(lo==hi)||(isfinite(fl)&&isfinite(fh)&&signbit(fl)!=signbit(fh));
   const auto med=secular_medium<FP32>(st,medium(st,t/nf,L),static_cast<size_t>(t/nf)*L);
@@ -749,7 +759,7 @@ __global__ void compare(Device st, int traces, int L, int nf, int K, int modes,
       double root=m<count ? st.roots[p+m] : CUDART_NAN;
       if (isfinite(root) && root>=0.99*st.b[off+L-1]) near=true;
       if (isfinite(root) && f_accept<1.0) {
-        const double omega=md::two_pi<double>()/st.period[t%nf];
+        const double omega=md::two_pi<double>()/st.trace_period(t,nf);
         const double fr=md::evaluate(secular_medium<FP32>(st,medium(st,t/nf,L),off),omega,root);
         atomicAdd(&st.stats[EVALS],1ULL);
         if (!isfinite(fr) || fabs(fr)>f_accept) {
@@ -821,10 +831,15 @@ using HostClock=std::chrono::steady_clock;
 double host_seconds(HostClock::time_point t){return std::chrono::duration<double>(HostClock::now()-t).count();}
 int env_integer(const char *name,int fallback,int low,int high){const char *v=std::getenv(name);if(!v)return fallback;char *end=nullptr;long n=std::strtol(v,&end,10);if(!end||*end||n<low||n>high)throw std::invalid_argument(std::string("Invalid ")+name);return static_cast<int>(n);}
 
+#include "cuda/continuation.cuh"
+
 class Solver {
   Device st_{};
   int B_,L_,nf_,modes_,K_,blocks_,device_=0,block_=256;
-  bool single_precision_;
+  bool single_precision_,group_velocity_,continuation_;
+  double group_rtol_;
+  int anchor_stride_;
+  double *hgroup_=nullptr;unsigned *hgroup_flags_=nullptr,*hprediction_=nullptr;
   cudaStream_t stream_=nullptr;
   void *host_input_=nullptr,*host_output_=nullptr;
   double *hd_=nullptr,*ha_=nullptr,*hb_=nullptr,*hr_=nullptr,*hp_=nullptr,*hbound_=nullptr,*hv_=nullptr;
@@ -843,20 +858,17 @@ class Solver {
       events_.push_back(e);
     }
     auto &e=events_[event_index_++];e.name=name;
-    check(cudaEventRecord(e.begin,stream_));f();check(cudaEventRecord(e.end,stream_));
+    // Nested stage timing can grow events_ and invalidate its references.
+    const cudaEvent_t begin=e.begin,end=e.end;
+    check(cudaEventRecord(begin,stream_));f();check(cudaEventRecord(end,stream_));
   }
   template<class T> void up(T *dst,const T *src,size_t n){check(cudaMemcpyAsync(dst,src,n*sizeof(T),cudaMemcpyHostToDevice,stream_));}
   template<class T> void down(T *dst,const T *src,size_t n){check(cudaMemcpyAsync(dst,src,n*sizeof(T),cudaMemcpyDeviceToHost,stream_));}
   void zero(void *dst,size_t n){check(cudaMemsetAsync(dst,0,n,stream_));}
 
   template<bool FP32>
-  void enqueue(int B,double tol,double accept,bool profile){
-    const size_t n=static_cast<size_t>(B)*L_;const int traces=B*nf_;
-    measured("h2d",profile,[&]{up(st_.d,hd_,n);up(st_.a,ha_,n);up(st_.b,hb_,n);up(st_.r,hr_,n);up(st_.period,hp_,nf_);up(st_.bounds,hbound_,2*B);});
-    measured("model_prepare",profile,[&]{prepare_models<FP32><<<B,256,0,stream_>>>(st_,B,L_);});
-    if(st_.shape)measured("shape_model_prepare",profile,[&]{shape_prepare_models<<<B,256,0,stream_>>>(st_,B,L_);});
-    zero(st_.stats,NSTATS*sizeof(unsigned long long));
-    measured("initialize",profile,[&]{initialize<<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_,L_,nf_,modes_);});
+  void solve_active(int B,double tol,double accept,bool profile){
+    const int traces=B*nf_;
     if(st_.wave&&st_.love_phase)measured("love_phase_search",profile,[&]{love_phase_search<FP32><<<std::min(traces,blocks_),32,FP32?0:4*L_*sizeof(double),stream_>>>(st_,traces,L_,nf_,K_,modes_,tol,accept);});
     const size_t sm=(2*CAP+(MD_TRACE_CONSTANTS?9:6)*L_)*sizeof(double);
     if(profile)zero(activity_,14*sizeof(int));
@@ -911,8 +923,36 @@ class Solver {
     measured("reconcile",profile,[&]{reconcile<FP32><<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_,tol);});
     st_.guarded=0;stages(4,true,true);
     }
+  }
+  template<bool FP32>
+  void enqueue(int B,double tol,double accept,bool profile){
+    const size_t n=static_cast<size_t>(B)*L_;const int traces=B*nf_;
+    measured("h2d",profile,[&]{up(st_.d,hd_,n);up(st_.a,ha_,n);up(st_.b,hb_,n);up(st_.r,hr_,n);up(st_.period,hp_,st_.row_periods?B:nf_);up(st_.bounds,hbound_,2*B);});
+    measured("model_prepare",profile,[&]{prepare_models<FP32><<<B,256,0,stream_>>>(st_,B,L_);});
+    if(st_.shape)measured("shape_model_prepare",profile,[&]{shape_prepare_models<<<B,256,0,stream_>>>(st_,B,L_);});
+    zero(st_.stats,NSTATS*sizeof(unsigned long long));
+    measured("initialize",profile,[&]{initialize<<<(traces+255)/256,256,0,stream_>>>(st_,traces,K_,L_,nf_,modes_);});
+    const bool continuing=continuation_&&st_.accuracy!=0&&nf_>=8;
+    if(continuation_){
+      if(continuing)measured("continuation_plan",profile,[&]{continuation_plan<<<1,1,0,stream_>>>(st_,nf_,anchor_stride_);});
+      zero(st_.queue_n,sizeof(int));zero(st_.cursor,sizeof(int));
+      measured("continuation_anchors",profile,[&]{continuation_hold<<<(traces+255)/256,256,0,stream_>>>(st_,traces,nf_,continuing);});
+    }
+    if(continuing)measured("continuation_anchor_search",profile,[&]{solve_active<FP32>(B,tol,accept,profile);});
+    else solve_active<FP32>(B,tol,accept,profile);
+    if(continuing){
+      measured("continuation_sources",profile,[&]{continuation_sources<<<(traces+127)/128,128,0,stream_>>>(st_,traces,K_);});
+      measured("continuation_derivatives",profile,[&]{anchor_slopes<<<(traces*K_+127)/128,128,0,stream_>>>(st_,traces,L_,nf_,K_,group_rtol_);});
+      zero(st_.queue_n,sizeof(int));zero(st_.cursor,sizeof(int));
+      zero(st_.next_n,sizeof(int));
+      measured("continuation_prepare",profile,[&]{continuation_prepare<<<(traces+127)/128,128,0,stream_>>>(st_,traces,nf_,K_,tol);});
+      if(st_.continuation_constants)measured("continuation_constants",profile,[&]{continuation_constants<FP32><<<std::min(traces,blocks_),32,0,stream_>>>(st_,L_,nf_);});
+      measured("continuation_local_search",profile,[&]{continuation_correct<FP32><<<(traces+127)/128,128,0,stream_>>>(st_,traces,L_,nf_,K_,modes_,tol,accept);});
+      measured("continuation_fallback_search",profile,[&]{solve_active<FP32>(B,tol,accept,profile);});
+    }
+    if(group_velocity_)measured("group_velocity",profile,[&]{group_output<<<(traces*modes_+127)/128,128,0,stream_>>>(st_,traces,L_,nf_,K_,modes_,group_rtol_);});
     measured("final_statistics",profile,[&]{final_statistics<<<(traces+255)/256,256,0,stream_>>>(st_,traces);});
-    measured("d2h",profile,[&]{down(hv_,st_.output,static_cast<size_t>(B)*modes_*nf_);down(hf_,st_.flags,traces);down(hl_,st_.level,traces);down(hc_,st_.count,traces);down(hs_,st_.stats,NSTATS);if(profile)down(hactivity_,activity_,14);});
+    measured("d2h",profile,[&]{down(hv_,st_.output,static_cast<size_t>(B)*modes_*nf_);down(hf_,st_.flags,traces);down(hl_,st_.level,traces);down(hc_,st_.count,traces);down(hs_,st_.stats,NSTATS);if(profile)down(hactivity_,activity_,14);if(group_velocity_){down(hgroup_,st_.group_output,static_cast<size_t>(traces)*modes_);down(hgroup_flags_,st_.group_flags,static_cast<size_t>(traces)*modes_);}if(continuation_)down(hprediction_,st_.prediction_flags,traces);});
     check(cudaGetLastError());
   }
   template<bool FP32>
@@ -935,15 +975,18 @@ class Solver {
     }
   }
  public:
-  Solver(int B,int L,int nf,int modes,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001,int secular=0,int refinement=1,int love_phase=1,bool single_precision=false)
-      :B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2),single_precision_(single_precision){
+  Solver(int B,int L,int nf,int modes,int accuracy,double period_threshold,double close_root_rtol,bool shape=false,double sampling_rtol=.001,int secular=0,int refinement=1,int love_phase=1,bool single_precision=false,bool group_velocity=false,double group_rtol=.001,bool continuation=false,int anchor_stride=4)
+      :B_(B),L_(L),nf_(nf),modes_(modes),K_(modes+2),single_precision_(single_precision),group_velocity_(group_velocity),continuation_(continuation),group_rtol_(group_rtol),anchor_stride_(anchor_stride){
     if(B<1||L<1||nf<1||modes<1||L>256||modes>256)throw py::value_error("QE geometry requires B,nf,modes>=1, 1<=L<=256, modes<=256");
+    if(!(group_rtol>0.)||!std::isfinite(group_rtol)||anchor_stride<2)throw py::value_error("invalid group tolerance or anchor stride");
     if(secular<0||secular>1)throw py::value_error("secular must be 0 (dunkin) or 1 (fast)");
     st_.secular=secular;st_.refinement=refinement;st_.love_phase=love_phase;
     if(refinement<0||refinement>2||love_phase<0||love_phase>1)throw py::value_error("invalid refinement or Love strategy");
     const md::AccuracyPolicy policy=md::make_accuracy_policy(accuracy,period_threshold,close_root_rtol);
     st_.close_root_rtol=policy.close_root_rtol;
-    st_.shape=shape;st_.sampling_rtol=sampling_rtol;
+    st_.shape=shape;
+    st_.auto_sampling=policy.accuracy==md::Accuracy::Auto&&sampling_rtol<0.;
+    st_.sampling_rtol=st_.auto_sampling?.01:sampling_rtol;
     st_.accuracy=static_cast<int>(policy.accuracy);st_.accept_level1=policy.accept_level1;st_.accept_level2=policy.accept_level2;
     st_.period_threshold=policy.period_threshold;st_.gap_factor=policy.gap_factor;st_.dense_gap_factor=policy.dense_gap_factor;st_.trough_threshold=policy.trough_threshold;
     st_.dense_floor4=policy.dense_floor4;st_.dense_floor5=policy.dense_floor5;st_.dense_factor4=policy.dense_factor4;st_.dense_factor5=policy.dense_factor5;
@@ -959,7 +1002,9 @@ class Solver {
       else set_shared_limits<false>(prop,shape);
       auto allocate=[&](auto *&ptr,size_t count){alloc(ptr,count);device_bytes_+=count*sizeof(*ptr);};
       allocate(st_.d,models);allocate(st_.a,models);allocate(st_.b,models);allocate(st_.r,models);
-      allocate(st_.period,nf);allocate(st_.bounds,2*B);allocate(st_.ia,models);allocate(st_.ib,models);
+      // A compact FP64 verification batch can carry one period per model row.
+      const int period_capacity=accuracy==0&&!single_precision&&nf==1?B:nf;
+      allocate(st_.period,period_capacity);allocate(st_.bounds,2*B);allocate(st_.ia,models);allocate(st_.ib,models);
       allocate(st_.irho,models);allocate(st_.irho2,models);
       if(single_precision_){allocate(st_.float_models,6*models);allocate(st_.float_limits,B);}
       allocate(st_.tx,static_cast<size_t>(B)*TABLE);allocate(st_.tn,static_cast<size_t>(B)*TABLE);allocate(st_.nt,B);allocate(st_.seeds,2*B);
@@ -971,15 +1016,22 @@ class Solver {
       allocate(st_.count,tr);allocate(st_.prev_count,tr);allocate(st_.status,tr);allocate(st_.active,tr);allocate(st_.level,tr);
       allocate(st_.flags,tr);allocate(st_.stats,NSTATS);allocate(st_.full_roots,roots);allocate(st_.guard_roots,roots);allocate(st_.verify,tr);allocate(st_.guard_count,tr);allocate(st_.full_count,tr);allocate(activity_,14);
       allocate(st_.sample_gap,tr);allocate(st_.risk,tr);allocate(st_.escalated,tr);
-      const size_t in_bytes=(4*models+nf+2*B)*sizeof(double);
+      if(group_velocity_){allocate(st_.group_output,tr*modes);allocate(st_.group_flags,tr*modes);}
+      if(continuation_){allocate(st_.anchor_left,nf);allocate(st_.anchor_right,nf);allocate(st_.prediction_flags,tr);allocate(st_.slopes,roots);if(MD_TRACE_CONSTANTS)allocate(st_.continuation_constants,tr*3*L);}
+      const size_t in_bytes=(4*models+period_capacity+2*B)*sizeof(double);
       const size_t output_base=tr*modes*sizeof(double)+3*tr*sizeof(int);
       const size_t stats_offset=(output_base+7)&~size_t(7);
-      const size_t out_bytes=stats_offset+NSTATS*sizeof(unsigned long long)+14*sizeof(int);
+      const size_t extra_offset=(stats_offset+NSTATS*sizeof(unsigned long long)+14*sizeof(int)+7)&~size_t(7);
+      const size_t group_bytes=group_velocity_?tr*modes*(sizeof(double)+sizeof(unsigned)):0;
+      const size_t out_bytes=extra_offset+group_bytes+(continuation_?tr*sizeof(unsigned):0);
       check(cudaHostAlloc(&host_input_,in_bytes,cudaHostAllocDefault));
       check(cudaHostAlloc(&host_output_,out_bytes,cudaHostAllocDefault));host_bytes_=in_bytes+out_bytes;
-      hd_=static_cast<double*>(host_input_);ha_=hd_+models;hb_=ha_+models;hr_=hb_+models;hp_=hr_+models;hbound_=hp_+nf;
+      hd_=static_cast<double*>(host_input_);ha_=hd_+models;hb_=ha_+models;hr_=hb_+models;hp_=hr_+models;hbound_=hp_+period_capacity;
       hv_=static_cast<double*>(host_output_);hf_=reinterpret_cast<unsigned*>(hv_+tr*modes);hl_=reinterpret_cast<int*>(hf_+tr);hc_=hl_+tr;
       hs_=reinterpret_cast<unsigned long long*>(static_cast<char*>(host_output_)+stats_offset);hactivity_=reinterpret_cast<int*>(hs_+NSTATS);
+      auto *extra=static_cast<char*>(host_output_)+extra_offset;
+      if(group_velocity_){hgroup_=reinterpret_cast<double*>(extra);hgroup_flags_=reinterpret_cast<unsigned*>(hgroup_+tr*modes);extra+=group_bytes;}
+      if(continuation_)hprediction_=reinterpret_cast<unsigned*>(extra);
     }catch(...){close();throw;}
   }
   Solver(const Solver&)=delete;
@@ -998,6 +1050,8 @@ class Solver {
     QE_FREE(full_roots) QE_FREE(guard_roots) QE_FREE(verify) QE_FREE(guard_count) QE_FREE(full_count)
     QE_FREE(sample_gap) QE_FREE(risk) QE_FREE(escalated)
     QE_FREE(shape_x) QE_FREE(shape_n)
+    QE_FREE(anchor_left) QE_FREE(anchor_right) QE_FREE(prediction_flags) QE_FREE(slopes) QE_FREE(group_output) QE_FREE(group_flags)
+    QE_FREE(continuation_constants)
 #undef QE_FREE
     if(activity_){cudaFree(activity_);activity_=nullptr;}
     if(host_input_){cudaFreeHost(host_input_);host_input_=nullptr;}if(host_output_){cudaFreeHost(host_output_);host_output_=nullptr;}
@@ -1012,11 +1066,21 @@ class Solver {
     if(!st_.d)throw std::runtime_error("QE solver is closed");check(cudaSetDevice(device_));
     if(d.ndim()!=2||d.shape(0)<1||d.shape(0)>B_||d.shape(1)!=L_)throw py::value_error("QE model shape exceeds allocated geometry");
     for(auto *v:{&a,&b,&r})if(v->ndim()!=2||v->shape(0)!=d.shape(0)||v->shape(1)!=L_)throw py::value_error("QE model shapes must agree");
-    if(periods.ndim()!=1||periods.size()!=nf_||bounds.ndim()!=2||bounds.shape(0)!=d.shape(0)||bounds.shape(1)!=2||!(tol>0))throw py::value_error("QE invalid periods, range or tolerance");
+    const bool per_row=periods.ndim()==2 && periods.shape(0)==d.shape(0) && periods.shape(1)==1 &&
+                       nf_==1 && !single_precision_ && st_.accuracy==0 && !continuation_;
+    if((!per_row && (periods.ndim()!=1||periods.size()!=nf_))||bounds.ndim()!=2||bounds.shape(0)!=d.shape(0)||bounds.shape(1)!=2||!(tol>0))throw py::value_error("QE invalid periods, range or tolerance");
+    if(continuation_&&st_.accuracy!=0&&nf_>=8){
+      for(int f=0;f<nf_;++f)if(!std::isfinite(periods.data()[f])||!(periods.data()[f]>0.)||(f&&!(periods.data()[f]>periods.data()[f-1])))
+        throw py::value_error("native continuation periods must be sorted and unique");
+    }
     const int B=static_cast<int>(d.shape(0)),traces=B*nf_;const size_t n=static_cast<size_t>(B)*L_;
     const py::array::ShapeContainer output_shape{B,modes_,nf_};
     py::array out(single_precision_?py::dtype::of<float>():py::dtype::of<double>(),output_shape);
     py::array_t<unsigned> flags({B,nf_});py::array_t<int> levels({B,nf_}),counts({B,nf_});
+    py::dict extras;py::array_t<double> groups;py::array_t<unsigned> group_flags,prediction_flags;
+    extras["group_velocity"]=py::none();extras["group_velocity_flags"]=py::none();extras["prediction_flags"]=py::none();
+    if(group_velocity_){groups=py::array_t<double>({B,modes_,nf_});group_flags=py::array_t<unsigned>({B,modes_,nf_});extras["group_velocity"]=groups;extras["group_velocity_flags"]=group_flags;}
+    if(continuation_){prediction_flags=py::array_t<unsigned>({B,nf_});extras["prediction_flags"]=prediction_flags;}
     void *velocity_out=out.mutable_data();
     auto *flags_out=flags.mutable_data();
     auto *levels_out=levels.mutable_data(),*counts_out=counts.mutable_data();
@@ -1024,9 +1088,9 @@ class Solver {
     double pack_s=0.,unpack_s=0.;
     {
       py::gil_scoped_release release;auto t=profile?HostClock::now():HostClock::time_point{};
-      std::memcpy(hd_,d.data(),n*8);std::memcpy(ha_,a.data(),n*8);std::memcpy(hb_,b.data(),n*8);std::memcpy(hr_,r.data(),n*8);std::memcpy(hp_,periods.data(),nf_*8);std::memcpy(hbound_,bounds.data(),2*B*8);
+      std::memcpy(hd_,d.data(),n*8);std::memcpy(ha_,a.data(),n*8);std::memcpy(hb_,b.data(),n*8);std::memcpy(hr_,r.data(),n*8);std::memcpy(hp_,periods.data(),periods.size()*8);std::memcpy(hbound_,bounds.data(),2*B*8);
       if(profile)pack_s=host_seconds(t);
-      st_.wave=wave;st_.automatic=automatic;st_.canonical_lower=single_precision_&&automatic&&canonical_lower;st_.guarded=0;st_.profile=profile;event_index_=0;
+      st_.row_periods=per_row;st_.wave=wave;st_.automatic=automatic;st_.canonical_lower=single_precision_&&automatic&&canonical_lower;st_.guarded=0;st_.profile=profile;event_index_=0;
       if(single_precision_)enqueue<true>(B,tol,accept,profile);
       else enqueue<false>(B,tol,accept,profile);
       check(cudaStreamSynchronize(stream_));
@@ -1036,10 +1100,13 @@ class Solver {
       std::memcpy(flags_out,hf_,traces*sizeof(*flags_out));
       std::memcpy(levels_out,hl_,traces*sizeof(*levels_out));
       std::memcpy(counts_out,hc_,traces*sizeof(*counts_out));
+      if(group_velocity_){std::memcpy(groups.mutable_data(),hgroup_,velocities*sizeof(double));std::memcpy(group_flags.mutable_data(),hgroup_flags_,velocities*sizeof(unsigned));}
+      if(continuation_)std::memcpy(prediction_flags.mutable_data(),hprediction_,traces*sizeof(unsigned));
       if(profile)unpack_s=host_seconds(t);
     }
     py::dict stats;
     for(int i=0;i<NSTATS;++i)if(i<CACHE_HITS||profile||i>=EARLY_ACCEPTS)stats[stat_names[i]]=hs_[i];
+    stats["evaluations"]=hs_[EVALS]+hs_[GROUP_EVALS]+hs_[CONT_EVALS];
     stats["strategy"]="qe_adaptive";stats["capacity"]=CAP;stats["density_table_knots"]=129;stats["cache_capacity"]=CACHE;
     stats["dense_tile"]=st_.accuracy==0?st_.dense_tile:256;
     stats["accuracy"]=md::accuracy_name(static_cast<md::Accuracy>(st_.accuracy));
@@ -1048,15 +1115,19 @@ class Solver {
     stats["pinned_host_bytes"]=host_bytes_;stats["device_workspace_bytes"]=device_bytes_;
     if(profile){py::dict timing;for(size_t i=0;i<event_index_;++i){float ms=0.;check(cudaEventElapsedTime(&ms,events_[i].begin,events_[i].end));py::str key(events_[i].name);double prev=timing.contains(key)?timing[key].cast<double>():0.;timing[key]=prev+ms*.001;}
       timing["host_pack"]=pack_s;timing["host_unpack"]=unpack_s;stats["timings_s"]=timing;py::list activity;for(int j=0;j<14;++j)activity.append(hactivity_[j]);stats["active_traces_by_stage"]=activity;}
-    return py::make_tuple(out,flags,stats,levels,counts);
+    return py::make_tuple(out,flags,stats,levels,counts,extras);
   }
 };
 
 } // namespace qe
 
 void bind_qe(py::module_ &m) {
+  m.attr("SUPPORTS_ROW_PERIODS")=true;
   m.attr("SUPPORTS_FP32")=true;
+  m.attr("SUPPORTS_AUTO_ACCURACY")=true;
   m.attr("SUPPORTS_CANONICAL_LOWER")=true;
+  m.attr("SUPPORTS_GROUP_VELOCITY")=true;
+  m.attr("SUPPORTS_CONTINUATION")=true;
   m.def("love_phase_kernel_report",[](int L,bool single_precision){
     if(L<1||L>256)throw py::value_error("L must be 1..256");
     cudaFuncAttributes a;
@@ -1092,7 +1163,7 @@ void bind_qe(py::module_ &m) {
     return d;
   },py::arg("L"),py::arg("accuracy")=0,py::arg("shape")=false,py::arg("single_precision")=false);
   py::class_<qe::Solver>(m,"QeSolver")
-    .def(py::init<int,int,int,int,int,double,double,bool,double,int,int,int,bool>(),py::arg("B"),py::arg("L"),py::arg("nf"),py::arg("nmodes"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001,py::arg("secular")=0,py::arg("refinement")=1,py::arg("love_phase")=1,py::arg("single_precision")=false)
+    .def(py::init<int,int,int,int,int,double,double,bool,double,int,int,int,bool,bool,double,bool,int>(),py::arg("B"),py::arg("L"),py::arg("nf"),py::arg("nmodes"),py::arg("accuracy")=0,py::arg("period_threshold")=0.,py::arg("close_root_rtol")=.005,py::arg("shape")=false,py::arg("sampling_rtol")=.001,py::arg("secular")=0,py::arg("refinement")=1,py::arg("love_phase")=1,py::arg("single_precision")=false,py::arg("group_velocity")=false,py::arg("group_rtol")=.001,py::arg("continuation")=false,py::arg("anchor_stride")=4)
     .def("run",&qe::Solver::run,py::arg("thickness"),py::arg("vp"),py::arg("vs"),py::arg("rho"),
          py::arg("periods"),py::arg("bounds"),py::arg("c_tol_rel")=1e-6,py::arg("f_accept")=1.0,py::arg("wave")=0,py::arg("automatic")=false,py::arg("profile")=false,py::arg("canonical_lower")=false)
     .def("close",&qe::Solver::close);

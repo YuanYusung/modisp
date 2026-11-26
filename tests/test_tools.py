@@ -99,12 +99,241 @@ def test_interrupted_streaming_resumes_from_verified_block(tmp_path, monkeypatch
         np.testing.assert_array_equal(np.load(args.output / f"{name}.npy"), getattr(expected, name))
 
 
-def test_reference_union_does_not_merge_two_close_modes():
+def test_reference_union_does_not_merge_two_close_modes(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]/"tools"))
     from validate import merge_witnesses
     root=np.array([1.,1.0000001,1.1])
     merged=merge_witnesses(root,[root+1e-10,root-1e-10])
     np.testing.assert_array_equal(merged,root)
     assert len(merged)==3
+
+
+@pytest.mark.parametrize("background_names", [(), ("ffmpeg",)])
+def test_gpu_monitor_records_opted_in_background_but_rejects_other_compute(background_names):
+    tool = Path(__file__).resolve().parents[1]/"tools"/"benchmark_modephys.py"
+    spec = importlib.util.spec_from_file_location("gpu_monitor_benchmark", tool)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    monitor = object.__new__(driver.GpuMonitor)
+    monitor.allowed = {100}
+    monitor.background_names = set(background_names)
+    monitor.background_samples = []
+    monitor.competitors = [];monitor.samples = [];monitor.peak_mib = {}
+    # A reconnect changes the video PID; neither background process may hide
+    # unexpected compute from a different Python job.
+    lines = ["0 100 C 40 10 - - - - 700 0 python",
+             "0 200 C 2 1 - - - - 300 0 ffmpeg",
+             "0 201 C 1 1 - - - - 300 0 ffmpeg",
+             "0 300 C 20 10 - - - - 500 0 python"]
+    monitor.proc = SimpleNamespace(stdout=lines, poll=lambda: None)
+    monitor._read()
+    assert len(monitor.samples) == 4 and monitor.peak_mib[100] == 700
+    assert len(monitor.background_samples) == (2 if background_names else 0)
+    assert len(monitor.competitors) == (1 if background_names else 3)
+    with pytest.raises(RuntimeError, match="concurrent GPU compute"):
+        monitor.check()
+
+
+@pytest.mark.parametrize("version", ["0.4.0", "99.0.0"])
+def test_baseline_monitor_registers_worker_before_setup_and_cleans_up(version, tmp_path, monkeypatch):
+    import io
+    tool = Path(__file__).resolve().parents[1]/"tools"/"benchmark_continuation.py"
+    spec = importlib.util.spec_from_file_location("continuation_monitor_benchmark", tool)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    monitor = SimpleNamespace(allowed={100})
+    setup_checks = []
+    pid = 431
+
+    class Input(io.StringIO):
+        def write(self, value):
+            command = json.loads(value)
+            # Worker setup may initialize CUDA before its response reaches
+            # the parent. Its PID must already be exempt from peer detection.
+            assert pid in monitor.allowed
+            if command["action"] == "setup":
+                setup_checks.append(True)
+            return super().write(value)
+
+    class Process:
+        def __init__(self):
+            self.pid = pid
+            self.returncode = None
+            self.stdin = Input()
+            self.stdout = io.StringIO(json.dumps(dict(version=version))+"\n")
+            self.stderr = io.StringIO()
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout):
+            assert pid in monitor.allowed
+            self.returncode = 0
+            return 0
+
+    process = Process()
+
+    def popen(*args, **kwargs):
+        assert pid not in monitor.allowed
+        return process
+
+    monkeypatch.setattr(driver.subprocess, "Popen", popen)
+    arguments = (tmp_path/"python040", tmp_path/"input.npz", {"backend": "cuda"}, "rayleigh", 1)
+    if version == "0.4.0":
+        baseline = driver.Baseline(*arguments, monitor=monitor)
+        assert baseline.metadata["version"] == version
+        assert pid in monitor.allowed
+        baseline.close()
+    else:
+        # Failed setup/version checks must not leave a stale allowed PID.
+        with pytest.raises(ValueError, match="0.4.0"):
+            driver.Baseline(*arguments, monitor=monitor)
+    assert setup_checks == [True]
+    assert monitor.allowed == {100}
+    assert process.returncode == 0
+    assert all(stream.closed for stream in (process.stdin, process.stdout, process.stderr))
+
+
+@pytest.fixture
+def phase_verification_case():
+    tool = Path(__file__).resolve().parents[1]/"tools"/"benchmark_continuation.py"
+    spec = importlib.util.spec_from_file_location("continuation_verification_benchmark", tool)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    B, M, T = 3, 2, 3
+    phase = (.5+.1*np.arange(B)[:, None, None]
+             +.4*np.arange(M)[None, :, None]+.05*np.arange(T)[None, None, :])
+
+    def snapshot(values):
+        return dict(phase_velocity=values.copy(), root_count=np.full((B, T), 4, dtype=np.int32),
+                    trace_flags=np.zeros((B, T), dtype=np.uint32))
+
+    case = SimpleNamespace(driver=driver, periods=np.array([1., 1.1, 1.2]),
+                           high=snapshot(phase), independent=snapshot(phase),
+                           candidate=snapshot(phase), calls=[])
+    # A duplicate alias in the old search is a wrong second root. Correcting
+    # it is a strict compatibility difference that still needs physical proof.
+    case.independent["phase_velocity"][1, 1, 1] = phase[1, 0, 1]*(1+1e-7)
+    case.batch = dict(thickness=np.column_stack((np.arange(B)+1., np.zeros(B))),
+                      vp=np.full((B, 2), 4.), vs=np.full((B, 2), 2.), rho=np.full((B, 2), 2.))
+    case.options = dict(backend="cuda", precision="float32", accuracy="balanced",
+                        profile=False, secular="fast", workspace_bytes=123456)
+
+    class HighSolver:
+        def __init__(self, **options):
+            case.calls.append(dict(options=options))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def __call__(self, **kwargs):
+            models = np.rint(kwargs["thickness"][:, 0]-1).astype(int)
+            case.calls[-1]["model_indices"] = models.tolist()
+            np.testing.assert_array_equal(kwargs["periods"], case.periods)
+            assert kwargs["nmodes"] == M
+            assert kwargs["wave"] == "rayleigh"
+            arrays = {name: value[models].copy() for name, value in case.high.items()}
+            return SimpleNamespace(**arrays)
+
+    case.md = SimpleNamespace(Solver=HighSolver, __version__="test")
+    case.verify = lambda snapshots: driver.verify_phase_differences(
+        case.md, case.batch, case.periods, M, "rayleigh", case.options, snapshots)
+    return case
+
+
+def test_physical_verification_requires_high_proof_without_erasing_strict_difference(phase_verification_case):
+    c = phase_verification_case
+    strict_before = c.driver.compare_phase(c.independent, c.candidate)
+    assert not strict_before["passed"] and strict_before["wrong"] == 1
+    result = c.verify(dict(independent=c.independent, continuation=c.candidate))["continuation"]
+    assert result["passed"]
+    assert result["changed_traces"] == 1
+    assert result["model_indices"] == [1]
+    assert result["candidate_comparison"]["passed"]
+    assert not result["independent_comparison"]["passed"]
+    assert c.driver.compare_phase(c.independent, c.candidate) == strict_before
+    assert len(c.calls) == 1 and c.calls[0]["model_indices"] == [1]
+    assert c.calls[0]["options"]["accuracy"] == "high"
+    assert c.calls[0]["options"]["precision"] == "float64"
+    assert c.calls[0]["options"].get("frequency_strategy", "independent") == "independent"
+    assert c.options["precision"] == "float32" and c.options["accuracy"] == "balanced"
+
+
+@pytest.mark.parametrize("failure", ["candidate_wrong", "both_wrong", "missing", "extra", "count", "infinite_missing"])
+def test_physical_verification_rejects_wrong_or_incomplete_candidate_prefix(phase_verification_case, failure):
+    c = phase_verification_case
+    if failure == "candidate_wrong":
+        c.candidate["phase_velocity"][1, 1, 1] += .2
+    elif failure == "both_wrong":
+        # The first mode is wrong in both variants and therefore is absent
+        # from the strict changed-cell mask. Verify the whole changed trace.
+        c.independent["phase_velocity"][1, 0, 1] += .1
+        c.candidate["phase_velocity"][1, 0, 1] += .1
+    elif failure == "missing":
+        c.candidate["phase_velocity"][1, 1, 1] = np.nan
+    elif failure == "extra":
+        c.high["phase_velocity"][1, 1, 1] = np.nan
+        c.high["root_count"][1, 1] = 1
+    elif failure == "infinite_missing":
+        c.high["phase_velocity"][1, 1, 1] = np.nan
+        c.candidate["phase_velocity"][1, 1, 1] = np.inf
+        c.high["root_count"][1, 1] = c.candidate["root_count"][1, 1] = 1
+    else:
+        c.candidate["root_count"][1, 1] = 3
+    result = c.verify(dict(independent=c.independent, continuation=c.candidate))["continuation"]
+    assert not result["passed"], result
+
+
+@pytest.mark.parametrize("failure", ["negative_count", "unresolved_flag", "nonascending", "prefix_hole", "infinite_missing"])
+def test_physical_verification_rejects_unresolved_or_invalid_high_reference(phase_verification_case, failure):
+    c = phase_verification_case
+    if failure == "negative_count":
+        c.high["root_count"][1, 1] = -1
+    elif failure == "unresolved_flag":
+        c.high["trace_flags"][1, 1] = md.TRACE_SEARCH_UNCONVERGED
+    elif failure == "nonascending":
+        c.high["phase_velocity"][1, :, 1] = c.high["phase_velocity"][1, ::-1, 1]
+        c.candidate["phase_velocity"][1, :, 1] = c.high["phase_velocity"][1, :, 1]
+    elif failure == "infinite_missing":
+        c.high["phase_velocity"][1, 1, 1] = np.inf
+        c.candidate["phase_velocity"][1, 1, 1] = np.nan
+        c.high["root_count"][1, 1] = c.candidate["root_count"][1, 1] = 1
+    else:
+        c.high["phase_velocity"][1, 0, 1] = np.nan
+        c.candidate["phase_velocity"][1, 0, 1] = np.nan
+        c.high["root_count"][1, 1] = c.candidate["root_count"][1, 1] = 1
+    result = c.verify(dict(independent=c.independent, continuation=c.candidate))["continuation"]
+    assert not result["passed"], result
+
+
+def test_physical_verification_ignores_unchanged_traces_and_batches_shared_references(phase_verification_case):
+    c = phase_verification_case
+    # A reference failure at an unchanged frequency must not expand the scope
+    # into validating legacy outputs that the new feature did not alter.
+    c.high["phase_velocity"][1, :, 0] = np.nan
+    c.high["root_count"][1, 0] = -1
+    c.high["trace_flags"][1, 0] = md.TRACE_SEARCH_UNCONVERGED
+    c.independent["phase_velocity"][2, 1, 2] = .8
+    first = {k: v.copy() for k, v in c.independent.items()}
+    first["phase_velocity"][1, :, 1] = c.candidate["phase_velocity"][1, :, 1]
+    second = {k: v.copy() for k, v in c.independent.items()}
+    second["phase_velocity"][2, :, 2] = c.candidate["phase_velocity"][2, :, 2]
+    result = c.verify(dict(independent=c.independent, continuation=first, combined=second))
+    assert result["continuation"]["passed"] and result["combined"]["passed"]
+    assert result["continuation"]["changed_traces"] == result["combined"]["changed_traces"] == 1
+    assert len(c.calls) == 1
+    assert c.calls[0]["model_indices"] == [1, 2]
+
+
+def test_physical_verification_does_no_work_when_strict_outputs_match(phase_verification_case):
+    c = phase_verification_case
+    same = {k: v.copy() for k, v in c.independent.items()}
+    result = c.verify(dict(independent=c.independent, group=same))
+    assert result == {}
+    assert not c.calls
 
 
 def test_benchmark_rejects_crossing_and_finite_mismatches():

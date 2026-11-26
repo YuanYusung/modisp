@@ -64,8 +64,7 @@ archives and third-party executables are not bundled.
 
 ## Retained tools
 
-The earlier consolidation reduced Python tool files from 19 to 10. The 0.4.0
-same-input backend benchmark adds three tools, bringing the current count to 13:
+The tools below cover fixed-input backend comparisons, group velocity and continuation.
 
 | Tool | Purpose |
 |---|---|
@@ -73,6 +72,7 @@ same-input backend benchmark adds three tools, bringing the current count to 13:
 | `benchmark_secular.py` | Fixed-node evaluator and paired solver measurements |
 | `benchmark_modephys.py` | Large NPY inputs, streaming checkpoints and comparisons |
 | `benchmark_ab.py` | Persistent paired before/after installations |
+| `benchmark_continuation.py` | Group/continuation combinations, fixed batch cases and paired 0.4.0 timing |
 | `benchmark_external.py` | Accuracy/performance against frozen solid-Rayleigh references |
 | `benchmark_backends.py` | Frozen inputs, persistent three-path timing, PID memory sampling, independent checks and profiles |
 | `backend_metrics.py` | Ordinal and one-to-one numerical accounting, including unknown reference tails |

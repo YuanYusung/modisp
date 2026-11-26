@@ -7,7 +7,7 @@ The Python import package and command-line program are both named `modisp`.
 ```sh
 python -m venv .venv
 # Activate the environment using your shell's normal command.
-python -m pip install /path/to/modisp-0.4.0-<matching-tags>.whl
+python -m pip install /path/to/modisp-0.5.0-<matching-tags>.whl
 modisp doctor
 python /path/to/examples/quickstart.py
 ```
@@ -20,12 +20,12 @@ and disba/Numba) are optional.
 
 Install the exact matching plugin after the CPU package:
 
-Version 0.4.0 uses private ABI 8. Replace both packages together when
+Version 0.5.0 uses private ABI 9. Replace both packages together when
 upgrading. Published assets are listed under
 [GitHub Releases](https://github.com/YuanYusung/modisp/releases).
 
 ```sh
-python -m pip install /path/to/modisp_cuda12-0.4.0-<matching-tags>.whl
+python -m pip install /path/to/modisp_cuda12-0.5.0-<matching-tags>.whl
 modisp doctor
 ```
 
@@ -38,10 +38,10 @@ first device visible to the process.
 ## Source builds
 
 CPU builds require CMake >=3.22, a C++17 compiler and Python development
-headers:
+headers. From a complete Git checkout or extracted GitHub source archive:
 
 ```sh
-python -m pip install /path/to/modisp-0.4.0.tar.gz
+python -m pip install .
 ```
 
 To build a wheel explicitly:
@@ -55,23 +55,24 @@ The plugin source distribution is self-contained and requires a CUDA 12
 toolkit plus a supported host compiler:
 
 ```sh
-CUDACXX=/usr/local/cuda/bin/nvcc python -m pip install /path/to/modisp_cuda12-0.4.0.tar.gz
+CUDACXX=/usr/local/cuda/bin/nvcc python -m pip install /path/to/modisp_cuda12-0.5.0.tar.gz
 ```
 
 For a combined source tree, first run `python tools/prepare_release.py` to copy
 the shared C++ sources into the plugin, then build the base and plugin
 separately. By default the plugin builds for `sm_70`, `sm_75`, `sm_80`,
 `sm_86`, `sm_89` and `sm_90`, and includes `sm_120` when nvcc lists it.
-Use `-Ccmake.define.CMAKE_CUDA_ARCHITECTURES=80` for an A800-only build.
 Installed extensions reside inside their Python packages.
 
-Build both packages from this checkout to use the FP32 solver. For example,
-an RTX 5050 needs a CUDA 12 toolkit with `sm_120` support:
+RTX 5050 and A800 use the same search implementation. Build one plugin wheel
+for both GPUs with a CUDA 12 compiler that supports both targets, such as
+CUDA 12.9.1. Use matching Linux and CPython ABIs when installing the wheels.
 
 ```sh
-python -m pip install .
-CUDACXX=/path/to/cuda-12.9/bin/nvcc python -m pip install ./cuda-plugin \
-  -Ccmake.define.CMAKE_CUDA_ARCHITECTURES=120
+python -m pip wheel --no-deps . -w wheelhouse
+CUDACXX=/path/to/cuda-12.9/bin/nvcc python -m pip wheel --no-deps ./cuda-plugin \
+  '-Ccmake.define.CMAKE_CUDA_ARCHITECTURES=80;120' -w wheelhouse
+python -m pip install --find-links=wheelhouse ./wheelhouse/modisp*.whl
 modisp doctor
 ```
 
@@ -82,8 +83,8 @@ modisp doctor
 Provide a wheelhouse with runtime dependencies and matching modisp wheels:
 
 ```sh
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.4.0
-python -m pip install --no-index --find-links /path/to/wheelhouse modisp-cuda12==0.4.0
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp==0.5.0
+python -m pip install --no-index --find-links /path/to/wheelhouse modisp-cuda12==0.5.0
 ```
 
 For an offline source build, also collect scikit-build-core, pybind11 and their

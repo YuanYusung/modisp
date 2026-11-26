@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 import numpy as np
-from . import Solver, __version__, _cpu, _load_cuda, BackendUnavailableError, check_mode_reliability
+from . import Solver, DEFAULT_ACCURACY, __version__, _cpu, _load_cuda, BackendUnavailableError, check_mode_reliability
 
 
 def main(argv=None):
@@ -23,8 +23,8 @@ def main(argv=None):
     forward.add_argument("--device",type=int,default=0)
     forward.add_argument("--cmin",type=float)
     forward.add_argument("--cmax",type=float)
-    forward.add_argument("--accuracy",choices=["high","balanced","fast"],default=None,
-                         help="search precision preset (default: balanced)")
+    forward.add_argument("--accuracy",choices=["auto","high","balanced","fast"],default=None,
+                         help=f"search accuracy preset (default: {DEFAULT_ACCURACY})")
     forward.add_argument("--search-strategy",choices=["shape_adaptive","qe_adaptive","uniform"],default="shape_adaptive")
     forward.add_argument("--sampling-rtol",type=float)
     forward.add_argument("--close-root-rtol",type=float,default=.005)
@@ -33,6 +33,11 @@ def main(argv=None):
                          help="secular evaluator (default: CUDA fast, CPU/uniform dunkin)")
     forward.add_argument("--refinement",choices=["legacy","brent","chandrupatla"],default=None)
     forward.add_argument("--love-strategy",choices=["phase","scan"],default="phase")
+    forward.add_argument("--group-velocity",action="store_true",help="compute FP64 implicit-derivative group velocities")
+    forward.add_argument("--group-rtol",type=float,default=.001,help="relative group-derivative consistency tolerance")
+    forward.add_argument("--frequency-strategy",choices=["independent","anchor_continuation"],default="independent")
+    forward.add_argument("--anchor-stride",type=int,default=4,help="maximum spacing of continuation anchor periods")
+    forward.add_argument("--no-continuity-check",action="store_true",help="disable the bilateral phase-curve and FP32 duplicate checks")
     forward.add_argument("--check-continuity",action="store_true",help="save separate heuristic mode-reliability diagnostics")
     modes=sub.add_parser("check-modes",help="check an existing forward NPZ without solving again")
     modes.add_argument("input");modes.add_argument("--output",required=True)
@@ -51,14 +56,19 @@ def main(argv=None):
     if args.command=="doctor":
         data=dict(version=__version__,python=sys.executable,cpu_module=_cpu.__file__,
                   default_precision="float64",cuda_float32_available=False,
-                  default_accuracy="balanced",default_refinement="brent",default_love_strategy="phase",refinement_options=["legacy","brent","chandrupatla"],default_search_strategy="shape_adaptive",
+                  cpu_auto_accuracy_available=bool(getattr(_cpu,"SUPPORTS_AUTO_ACCURACY",False)),
+                  cuda_auto_accuracy_available=False,
+                  default_accuracy=DEFAULT_ACCURACY,accuracy_options=["auto","high","balanced","fast"],default_refinement="brent",default_love_strategy="phase",refinement_options=["legacy","brent","chandrupatla"],default_search_strategy="shape_adaptive",
                   default_secular_by_backend={"cpu":"dunkin","cuda":"fast","uniform":"dunkin"},secular_options=["dunkin","fast"],
+                  default_continuity_check=True,default_group_velocity=False,default_group_rtol=.001,default_frequency_strategy="independent",
+                  frequency_strategies=["independent","anchor_continuation"],default_anchor_stride=4,
                   private_abi=int(_cpu.ABI_VERSION),sampling_capacity=2048)
         try:
             module=_load_cuda();available=bool(module.available(0));data.update(cuda_module=module.__file__,cuda_available=available,auto_backend="cuda" if available else "cpu")
             if available:
                 module.set_device(0);free,total=module.memory_info();data.update(cuda_device=module.device_name(),free_device_bytes=free,total_device_bytes=total)
                 data["cuda_float32_available"] = bool(getattr(module, "SUPPORTS_FP32", False))
+                data["cuda_auto_accuracy_available"] = bool(getattr(module, "SUPPORTS_AUTO_ACCURACY", False))
         except BackendUnavailableError as exc:data.update(cuda_available=False,cuda_reason=str(exc),auto_backend="cpu")
         except RuntimeError as exc:data.update(cuda_available=False,cuda_reason=str(exc),auto_backend="error")
         data["default_secular"]=data["default_secular_by_backend"].get(data["auto_backend"])
@@ -69,12 +79,22 @@ def main(argv=None):
                 accuracy=args.accuracy,close_root_rtol=args.close_root_rtol,c_tol_rel=args.c_tol_rel,
                 search_strategy=args.search_strategy,sampling_rtol=args.sampling_rtol,
                 secular=args.secular,refinement=args.refinement,love_strategy=args.love_strategy,
-                precision=args.precision) as solver:
+                precision=args.precision,group_velocity=args.group_velocity,group_rtol=args.group_rtol,
+                frequency_strategy=args.frequency_strategy,anchor_stride=args.anchor_stride,continuity_check=not args.no_continuity_check) as solver:
         out=solver(**model,periods=periods,nmodes=args.nmodes,wave=args.wave)
         diagnostics={}
         if args.check_continuity:
             check=check_mode_reliability(out)
-            diagnostics=dict(continuity_flags=check.flags,continuity_assessed=check.assessed,continuity_previous_index=check.previous_index,continuity_sorted_order=check.sorted_order)
+            diagnostics=dict(mode_reliability_flags=check.flags,continuity_assessed=check.assessed,continuity_previous_index=check.previous_index,continuity_sorted_order=check.sorted_order)
+        if out.accuracy=="auto":
+            diagnostics["auto_relaxed"]=out.auto_relaxed
+            maximum=solver.stats()["sampling_rtol_max"]
+            diagnostics["sampling_rtol_max"]=np.asarray(np.nan if maximum is None else maximum)
+        if out.continuity_flags is not None:diagnostics["continuity_flags"]=out.continuity_flags
+        if out.group_velocity is not None:
+            diagnostics.update(group_velocity=out.group_velocity,group_velocity_flags=out.group_velocity_flags,
+                               group_velocity_mask=out.group_velocity_mask,group_velocity_valid=out.group_velocity_valid)
+        if out.prediction_flags is not None:diagnostics["prediction_flags"]=out.prediction_flags
         np.savez_compressed(args.output,**diagnostics,refinement=np.asarray(out.refinement),love_strategy=np.asarray(out.love_strategy or ""),phase_velocity=out.phase_velocity,periods=out.period,
                             mode_mask=out.mode_mask,status=out.status,trace_flags=out.trace_flags,
                             search_bounds=out.search_bounds,search_level=out.search_level,
@@ -85,7 +105,11 @@ def main(argv=None):
                             close_root_risk=out.close_root_risk,
                             close_root_rtol=np.asarray(out.close_root_rtol),search_strategy=np.asarray(out.search_strategy),
                             sampling_rtol=np.asarray(np.nan if out.sampling_rtol is None else out.sampling_rtol),
-                            secular=np.asarray(out.secular))
+                            secular=np.asarray(out.secular),group_rtol=np.asarray(args.group_rtol),
+                            frequency_strategy=np.asarray(out.frequency_strategy),
+                            frequency_strategy_used=np.asarray(out.frequency_strategy_used),
+                            frequency_strategy_reason=np.asarray(out.frequency_strategy_reason),
+                            anchor_stride=np.asarray(out.anchor_stride))
     return 2 if np.any(out.trace_flags & 4) else 0
 
 

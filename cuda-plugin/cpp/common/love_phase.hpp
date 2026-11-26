@@ -7,15 +7,16 @@ MD_HD T phase_unwrap(T raw,T previous){
   return previous+atan2(sin(raw-previous),cos(raw-previous));
 }
 template<class T>
-MD_HD T love_phase_values(const T *h,const T *vs,const T *rho,int layers,T omega,T c){
+MD_HD T love_phase_values(const T *h,const T *vs,const T *rho,int layers,T omega,T c,
+                          const T *prepared_kb=nullptr){
   const int last=layers-1,top=vs[0]==T(0)?1:0;
-  const T k=omega/c,khalf=omega/vs[last];
+  const T k=omega/c,khalf=prepared_kb?prepared_kb[last]:omega/vs[last];
   if(!(k>khalf))return NAN;
   T scale=rho[last]*vs[last]*vs[last]*sqrt((k+khalf)*(k-khalf));
   T theta=two_pi<T>()*T(.125);
   for(int j=last-1;j>=top;--j){
     if(h[j]==T(0))continue;
-    const T mu=rho[j]*vs[j]*vs[j],kb=omega/vs[j];
+    const T mu=rho[j]*vs[j]*vs[j],kb=prepared_kb?prepared_kb[j]:omega/vs[j];
     const T r=sqrt(fabs((k+kb)*(k-kb))),next=mu*(r>T(0)?r:T(1)/h[j]);
     if(!(scale>T(0))||!(next>T(0))||!refinement_finite(scale/next))return NAN;
     theta=phase_unwrap(atan2((scale/next)*sin(theta),cos(theta)),theta);scale=next;
@@ -35,7 +36,7 @@ MD_HD T love_phase_values(const T *h,const T *vs,const T *rho,int layers,T omega
 }
 
 MD_HD double love_phase(const Medium &m,double omega,double c){
-  return love_phase_values(m.h,m.vs,m.rho,m.L,omega,c);
+  return love_phase_values(m.h,m.vs,m.rho,m.L,omega,c,m.kb);
 }
 
 #ifdef __CUDACC__
